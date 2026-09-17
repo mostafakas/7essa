@@ -1,0 +1,18 @@
+{
+  "name": "hessa-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "منصة حصّة لإدارة التعليم الخاص في مصر",
+  "workspaces": ["apps/api", "apps/web"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "setup:env": "node scripts/setup-env.mjs",
+    "db:up": "docker compose up -d postgres redis",
+    "db:setup": "npm run db:init -w apps/api && npm run db:security -w apps/api && npm run db:seed -w apps/api",
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "test": "npm test -w apps/api",
+    "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web",
+    "build": "npm run build -w apps/api && npm run build -w apps/web"
+  }
+}

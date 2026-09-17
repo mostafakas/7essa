@@ -1,0 +1,582 @@
+// منصة حصّة — نموذج البيانات
+// الجداول متعددة العملاء تحمل workspaceId وتُعزل بسياسات RLS (انظر prisma/sql/security.sql)
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("MIGRATION_DATABASE_URL")
+}
+
+enum WorkspaceType {
+  CENTER
+  TEACHER
+}
+
+enum WorkspaceStatus {
+  TRIAL
+  ACTIVE
+  PAUSED
+  SUSPENDED
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  TEACHER
+  RECEPTION
+  ACCOUNTANT
+  ASSISTANT
+  FOLLOWUP
+}
+
+enum MembershipStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum EducationSystem {
+  GENERAL
+  BACCALAUREATE
+  AZHAR
+  LANGUAGES
+  INTERNATIONAL
+}
+
+enum SessionStatus {
+  SCHEDULED
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  WAITLIST
+  SUSPENDED
+  LEFT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+}
+
+enum AttendanceMethod {
+  QR_DYNAMIC
+  QR_CARD
+  CODE
+  MANUAL
+  AUTO
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+  APPROVED
+}
+
+enum PaymentMethod {
+  CASH
+  WALLET
+  CARD
+  TRANSFER
+}
+
+enum ReceiptStatus {
+  VALID
+  CANCEL_REQUESTED
+  CANCELLED
+}
+
+enum ContractType {
+  PERCENTAGE
+  HALL_RENT_HOURLY
+  PER_STUDENT
+  MIXED
+}
+
+enum SettlementStatus {
+  DRAFT
+  TEACHER_CONFIRMED
+  DISPUTED
+  APPROVED
+  PAID
+}
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+// ───────────── الهوية (عامة على مستوى المنصة) ─────────────
+
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  phone           String    @unique
+  name            String
+  phoneVerifiedAt DateTime?
+  isPlatformAdmin Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+
+  memberships Membership[]
+  sessions    RefreshSession[]
+  guardianOf  Student[]        @relation("GuardianStudents")
+
+  @@map("users")
+}
+
+model OtpChallenge {
+  id         String    @id @default(uuid()) @db.Uuid
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+  @@map("otp_challenges")
+}
+
+model RefreshSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_sessions")
+}
+
+model Notification {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  workspaceId String?   @db.Uuid
+  kind        String
+  title       String
+  body        String
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ───────────── مساحات العمل والعضويات ─────────────
+
+model Workspace {
+  id                      String          @id @default(uuid()) @db.Uuid
+  type                    WorkspaceType
+  name                    String
+  status                  WorkspaceStatus @default(TRIAL)
+  plan                    String          @default("trial")
+  trialEndsAt             DateTime?
+  receiptSeq              Int             @default(0)
+  receptionMaxDiscountPct Int             @default(10)
+  lateAfterMinutes        Int             @default(15)
+  createdAt               DateTime        @default(now())
+
+  memberships Membership[]
+
+  @@map("workspaces")
+}
+
+model Membership {
+  id                     String           @id @default(uuid()) @db.Uuid
+  workspaceId            String           @db.Uuid
+  workspace              Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId                 String           @db.Uuid
+  user                   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                   Role
+  status                 MembershipStatus @default(ACTIVE)
+  // المساعد يتبع مدرسًا بعينه
+  supervisorMembershipId String?          @db.Uuid
+  createdAt              DateTime         @default(now())
+
+  groups      Group[]
+  contracts   TeacherContract[]
+  advances    TeacherAdvance[]
+  settlements Settlement[]
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+// ───────────── الأكاديمي ─────────────
+
+model Hall {
+  id          String         @id @default(uuid()) @db.Uuid
+  workspaceId String         @db.Uuid
+  name        String
+  capacity    Int
+  createdAt   DateTime       @default(now())
+  sessions    ClassSession[]
+
+  @@unique([workspaceId, name])
+  @@map("halls")
+}
+
+model Group {
+  id                  String          @id @default(uuid()) @db.Uuid
+  workspaceId         String          @db.Uuid
+  teacherMembershipId String          @db.Uuid
+  teacher             Membership      @relation(fields: [teacherMembershipId], references: [id])
+  name                String
+  subject             String
+  grade               String
+  system              EducationSystem @default(GENERAL)
+  capacity            Int
+  monthlyFee          Decimal         @db.Decimal(12, 2)
+  defaultHallId       String?         @db.Uuid
+  archived            Boolean         @default(false)
+  createdAt           DateTime        @default(now())
+
+  sessions    ClassSession[]
+  enrollments Enrollment[]
+  exams       Exam[]
+
+  @@index([workspaceId, teacherMembershipId])
+  @@map("groups")
+}
+
+model ClassSession {
+  id           String        @id @default(uuid()) @db.Uuid
+  workspaceId  String        @db.Uuid
+  groupId      String        @db.Uuid
+  group        Group         @relation(fields: [groupId], references: [id])
+  hallId       String?       @db.Uuid
+  hall         Hall?         @relation(fields: [hallId], references: [id])
+  startsAt     DateTime      @db.Timestamptz(3)
+  endsAt       DateTime      @db.Timestamptz(3)
+  status       SessionStatus @default(SCHEDULED)
+  openedAt     DateTime?
+  closedAt     DateTime?
+  cancelReason String?
+  createdAt    DateTime      @default(now())
+
+  attendance Attendance[]
+
+  @@index([workspaceId, startsAt])
+  @@index([groupId, startsAt])
+  @@map("class_sessions")
+}
+
+// ───────────── الطلاب ─────────────
+
+// هوية الطالب عامة: يراها ولي الأمر، وتراها المساحات المسجل بها فقط
+model Student {
+  id                   String   @id @default(uuid()) @db.Uuid
+  fullName             String
+  grade                String
+  school               String?
+  guardianUserId       String   @db.Uuid
+  guardian             User     @relation("GuardianStudents", fields: [guardianUserId], references: [id])
+  studentUserId        String?  @db.Uuid
+  createdInWorkspaceId String   @db.Uuid
+  cardVersion          Int      @default(1)
+  createdAt            DateTime @default(now())
+
+  enrollments Enrollment[]
+  attendance  Attendance[]
+  receipts    Receipt[]
+  attempts    ExamAttempt[]
+
+  @@index([guardianUserId])
+  @@map("students")
+}
+
+model Enrollment {
+  id                String           @id @default(uuid()) @db.Uuid
+  workspaceId       String           @db.Uuid
+  studentId         String           @db.Uuid
+  student           Student          @relation(fields: [studentId], references: [id])
+  groupId           String           @db.Uuid
+  group             Group            @relation(fields: [groupId], references: [id])
+  code              String
+  status            EnrollmentStatus @default(ACTIVE)
+  discountPct       Int              @default(0)
+  guardianConsentAt DateTime?
+  createdAt         DateTime         @default(now())
+
+  receipts Receipt[]
+
+  @@unique([groupId, studentId])
+  @@unique([workspaceId, code])
+  @@index([studentId])
+  @@map("enrollments")
+}
+
+model Attendance {
+  id           String           @id @default(uuid()) @db.Uuid
+  workspaceId  String           @db.Uuid
+  sessionId    String           @db.Uuid
+  session      ClassSession     @relation(fields: [sessionId], references: [id])
+  studentId    String           @db.Uuid
+  student      Student          @relation(fields: [studentId], references: [id])
+  status       AttendanceStatus
+  method       AttendanceMethod
+  offline      Boolean          @default(false)
+  recordedById String?          @db.Uuid
+  recordedAt   DateTime         @default(now())
+  // مفتاح منع التكرار عند المزامنة من وضع عدم الاتصال
+  clientOpId   String?          @unique
+
+  @@unique([sessionId, studentId])
+  @@index([workspaceId, studentId])
+  @@map("attendance")
+}
+
+// ───────────── المالية ─────────────
+
+model CashShift {
+  id             String      @id @default(uuid()) @db.Uuid
+  workspaceId    String      @db.Uuid
+  openedById     String      @db.Uuid
+  // يمنع فتح أكثر من وردية لنفس الموظف (null بعد الإغلاق)
+  openKey        String?     @unique
+  openingBalance Decimal     @db.Decimal(12, 2)
+  openedAt       DateTime    @default(now())
+  closedAt       DateTime?
+  expectedCash   Decimal?    @db.Decimal(12, 2)
+  countedCash    Decimal?    @db.Decimal(12, 2)
+  variance       Decimal?    @db.Decimal(12, 2)
+  closeNote      String?
+  approvedById   String?     @db.Uuid
+  status         ShiftStatus @default(OPEN)
+
+  receipts Receipt[]
+  expenses Expense[]
+
+  @@index([workspaceId, status])
+  @@map("cash_shifts")
+}
+
+// الإيصال لا يُحذف ولا تُعدل قيمه المالية (Trigger في قاعدة البيانات)
+model Receipt {
+  id                  String        @id @default(uuid()) @db.Uuid
+  workspaceId         String        @db.Uuid
+  number              Int
+  shiftId             String?       @db.Uuid
+  shift               CashShift?    @relation(fields: [shiftId], references: [id])
+  studentId           String        @db.Uuid
+  student             Student       @relation(fields: [studentId], references: [id])
+  enrollmentId        String        @db.Uuid
+  enrollment          Enrollment    @relation(fields: [enrollmentId], references: [id])
+  amount              Decimal       @db.Decimal(12, 2)
+  discountAmount      Decimal       @default(0) @db.Decimal(12, 2)
+  method              PaymentMethod
+  forMonth            String
+  note                String?
+  issuedById          String        @db.Uuid
+  status              ReceiptStatus @default(VALID)
+  cancelReason        String?
+  cancelRequestedById String?       @db.Uuid
+  cancelApprovedById  String?       @db.Uuid
+  cancelledAt         DateTime?
+  createdAt           DateTime      @default(now())
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, forMonth])
+  @@index([enrollmentId, forMonth])
+  @@index([studentId])
+  @@map("receipts")
+}
+
+model Expense {
+  id          String     @id @default(uuid()) @db.Uuid
+  workspaceId String     @db.Uuid
+  shiftId     String?    @db.Uuid
+  shift       CashShift? @relation(fields: [shiftId], references: [id])
+  amount      Decimal    @db.Decimal(12, 2)
+  category    String
+  note        String?
+  createdById String     @db.Uuid
+  createdAt   DateTime   @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@map("expenses")
+}
+
+// ───────────── التسويات ─────────────
+
+model TeacherContract {
+  id                  String       @id @default(uuid()) @db.Uuid
+  workspaceId         String       @db.Uuid
+  teacherMembershipId String       @db.Uuid
+  teacher             Membership   @relation(fields: [teacherMembershipId], references: [id])
+  type                ContractType
+  // نسبة المدرس من المحصل
+  teacherPct          Decimal?     @db.Decimal(5, 2)
+  hourlyRent          Decimal?     @db.Decimal(12, 2)
+  perStudentAmount    Decimal?     @db.Decimal(12, 2)
+  startsOn            DateTime     @db.Date
+  endsOn              DateTime?    @db.Date
+  notes               String?
+  createdAt           DateTime     @default(now())
+
+  @@index([workspaceId, teacherMembershipId])
+  @@map("teacher_contracts")
+}
+
+model TeacherAdvance {
+  id                  String     @id @default(uuid()) @db.Uuid
+  workspaceId         String     @db.Uuid
+  teacherMembershipId String     @db.Uuid
+  teacher             Membership @relation(fields: [teacherMembershipId], references: [id])
+  amount              Decimal    @db.Decimal(12, 2)
+  month               String
+  note                String?
+  createdById         String     @db.Uuid
+  createdAt           DateTime   @default(now())
+
+  @@index([workspaceId, month])
+  @@map("teacher_advances")
+}
+
+model Settlement {
+  id                  String           @id @default(uuid()) @db.Uuid
+  workspaceId         String           @db.Uuid
+  teacherMembershipId String           @db.Uuid
+  teacher             Membership       @relation(fields: [teacherMembershipId], references: [id])
+  month               String
+  contractType        ContractType
+  grossCollected      Decimal          @db.Decimal(12, 2)
+  payingStudents      Int
+  hoursUsed           Decimal          @db.Decimal(8, 2)
+  teacherShare        Decimal          @db.Decimal(12, 2)
+  centerShare         Decimal          @db.Decimal(12, 2)
+  advancesDeducted    Decimal          @db.Decimal(12, 2)
+  net                 Decimal          @db.Decimal(12, 2)
+  breakdown           Json
+  status              SettlementStatus @default(DRAFT)
+  disputeNote         String?
+  confirmedAt         DateTime?
+  approvedById        String?          @db.Uuid
+  approvedAt          DateTime?
+  paidById            String?          @db.Uuid
+  paidAt              DateTime?
+  paymentMethod       PaymentMethod?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@unique([workspaceId, teacherMembershipId, month])
+  @@map("settlements")
+}
+
+// ───────────── الامتحانات ─────────────
+
+model Question {
+  id                String       @id @default(uuid()) @db.Uuid
+  workspaceId       String       @db.Uuid
+  ownerMembershipId String       @db.Uuid
+  shared            Boolean      @default(false)
+  subject           String
+  grade             String
+  unit              String?
+  type              QuestionType
+  body              String
+  choices           Json
+  correctIndex      Int
+  difficulty        Int          @default(2)
+  bloom             String?
+  createdAt         DateTime     @default(now())
+
+  examLinks ExamQuestion[]
+
+  @@index([workspaceId, subject, grade])
+  @@map("questions")
+}
+
+model Exam {
+  id                    String     @id @default(uuid()) @db.Uuid
+  workspaceId           String     @db.Uuid
+  groupId               String?    @db.Uuid
+  group                 Group?     @relation(fields: [groupId], references: [id])
+  title                 String
+  durationMin           Int
+  opensAt               DateTime   @db.Timestamptz(3)
+  closesAt              DateTime   @db.Timestamptz(3)
+  showResultImmediately Boolean    @default(true)
+  shuffle               Boolean    @default(true)
+  status                ExamStatus @default(DRAFT)
+  createdById           String     @db.Uuid
+  createdAt             DateTime   @default(now())
+
+  questions ExamQuestion[]
+  attempts  ExamAttempt[]
+
+  @@index([workspaceId, groupId])
+  @@map("exams")
+}
+
+model ExamQuestion {
+  examId      String   @db.Uuid
+  exam        Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  questionId  String   @db.Uuid
+  question    Question @relation(fields: [questionId], references: [id])
+  workspaceId String   @db.Uuid
+  position    Int
+  points      Int      @default(1)
+
+  @@id([examId, questionId])
+  @@map("exam_questions")
+}
+
+model ExamAttempt {
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @db.Uuid
+  examId        String    @db.Uuid
+  exam          Exam      @relation(fields: [examId], references: [id])
+  studentId     String    @db.Uuid
+  student       Student   @relation(fields: [studentId], references: [id])
+  startedAt     DateTime  @default(now())
+  deadlineAt    DateTime
+  submittedAt   DateTime?
+  // ترتيب الأسئلة وتبديل الاختيارات الخاص بهذا الطالب
+  questionOrder Json
+  answers       Json?
+  results       Json?
+  score         Int?
+  maxScore      Int?
+  late          Boolean   @default(false)
+
+  @@unique([examId, studentId])
+  @@map("exam_attempts")
+}
+
+// ───────────── التدقيق ─────────────
+
+// سجل إلحاقي فقط: التعديل والحذف ممنوعان بـ Trigger
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  workspaceId String?  @db.Uuid
+  actorUserId String?  @db.Uuid
+  action      String
+  entity      String
+  entityId    String?
+  meta        Json?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@map("audit_logs")
+}
