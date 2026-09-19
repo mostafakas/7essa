@@ -14,6 +14,13 @@ export function normalizeEgyptPhone(input: string): string | null {
 }
 
 /** يخفي منتصف الرقم عند العرض لأدوار لا تحتاج الرقم كاملًا */
-export function maskPhone(phone: string): string {
+export function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return '—';
   return phone.length < 8 ? '***' : `${phone.slice(0, 5)}*****${phone.slice(-3)}`;
+}
+
+/** الصيغة المحلية للعرض: 01XXXXXXXXX */
+export function localPhone(phone: string | null | undefined): string {
+  if (!phone) return '';
+  return phone.startsWith('+20') ? `0${phone.slice(3)}` : phone;
 }

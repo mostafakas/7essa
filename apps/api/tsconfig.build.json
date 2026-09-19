@@ -1,5 +1,15 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test", "prisma"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "prisma"
+  ],
+  "compilerOptions": {
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  }
 }

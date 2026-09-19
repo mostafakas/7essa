@@ -1,9 +1,12 @@
 import type { Request } from 'express';
+import type { AccessState } from './access';
 import type { RoleName } from './permissions';
 
 export interface AuthUser {
   id: string;
   isPlatformAdmin: boolean;
+  /** كلمة مرور مؤقتة لم تُغير بعد: كل المسارات مغلقة عدا تغييرها */
+  mustChangePassword: boolean;
 }
 
 /** سياق الطلب داخل مساحة عمل، يضبطه WorkspaceGuard بعد التحقق من العضوية */
@@ -14,12 +17,20 @@ export interface WorkspaceCtx {
   role: RoleName;
   /** عند وجوده تُقيد البيانات بمجموعات هذا المدرس */
   teacherScopeId: string | null;
+  access: AccessState;
+  ip?: string;
+}
+
+export interface PlatformCtx {
+  userId: string;
+  role: 'SUPER_ADMIN' | 'SUPPORT' | 'FINANCE' | 'VIEWER';
   ip?: string;
 }
 
 export interface HessaRequest extends Request {
   user?: AuthUser;
   ws?: WorkspaceCtx;
+  platform?: PlatformCtx;
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

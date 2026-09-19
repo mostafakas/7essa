@@ -10,6 +10,12 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+
+  /** رمز الخطأ من الخادم إن وُجد (مثل READ_ONLY) */
+  get code(): string | undefined {
+    const c = (this.details as { code?: unknown } | null)?.code;
+    return typeof c === 'string' ? c : undefined;
+  }
 }
 
 const WS_KEY = 'hessa.ws';
@@ -99,6 +105,11 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}, retr
 
   const text = await res.text();
   const data = text ? safeJson(text) : null;
+  // كلمة مرور مؤقتة: كل الصفحات مغلقة حتى تتغير
+  if (res.status === 403 && (data as { code?: string } | null)?.code === 'PASSWORD_CHANGE_REQUIRED' && !window.location.pathname.startsWith('/account')) {
+    window.location.assign('/account?required=1');
+    throw new ApiError('غيّر كلمة المرور المؤقتة أولًا', 403, data);
+  }
   if (!res.ok) {
     const raw = (data as { message?: unknown } | null)?.message;
     const message = Array.isArray(raw) ? String(raw[0]) : typeof raw === 'string' ? raw : 'حدث خطأ غير متوقع';

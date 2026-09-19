@@ -76,7 +76,7 @@ export interface StudentListItem {
   grade: string;
   school: string | null;
   guardianName: string;
-  guardianPhone: string;
+  guardianPhone: string | null;
   group: { id: string; name: string; subject: string };
   due?: DueView;
 }
@@ -152,7 +152,9 @@ export interface Member {
   supervisorMembershipId: string | null;
   name: string;
   phone: string;
+  login?: string;
   activated: boolean;
+  hasPassword?: boolean;
   isMe: boolean;
 }
 

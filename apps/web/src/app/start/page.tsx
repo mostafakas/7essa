@@ -26,6 +26,28 @@ export default function StartPage() {
   if (!me) return <main className="narrow"><Loading what="حسابك" /></main>;
   const needsName = me.user.name === PLACEHOLDER_NAME;
 
+  if (!me.config.allowSelfSignup) {
+    return (
+      <>
+        <header className="top-bar">
+          <span className="brand" style={{ padding: 0 }}>حصّة</span>
+          <nav>
+            <Link href="/account">حسابي</Link>
+            <button className="btn ghost" onClick={() => void logout()}>تسجيل الخروج</button>
+          </nav>
+        </header>
+        <main className="narrow stack">
+          <h1>أهلًا {me.user.name}</h1>
+          <div className="note info">
+            حسابك جاهز لكنه غير مرتبط بأي سنتر أو طالب بعد. مساحات العمل الجديدة تُفعَّل عن طريق إدارة منصة حصّة.
+            {me.config.supportPhone ? <> تواصل معنا على <span className="num">{me.config.supportPhone}</span>.</> : null}
+          </div>
+          <p className="muted">ولي أمر؟ اطلب من السنتر أو المدرس تسجيل ابنك برقمك، وستظهر بياناته هنا تلقائيًا.</p>
+        </main>
+      </>
+    );
+  }
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
@@ -45,12 +67,13 @@ export default function StartPage() {
         <nav>
           {me.memberships.length ? <Link href="/app">مساحات العمل</Link> : null}
           {me.children ? <Link href="/family">أبنائي</Link> : null}
+          {me.user.platformRole ? <Link href="/platform">إدارة المنصة</Link> : null}
           <button className="btn ghost" onClick={() => void logout()}>تسجيل الخروج</button>
         </nav>
       </header>
       <main className="narrow stack">
         <h1>ابدأ مساحة عملك</h1>
-        <p className="muted">30 يومًا تجربة كاملة بدون بطاقة دفع. تقدر تضيف فريقك بعد الإنشاء.</p>
+        <p className="muted">فترة تجريبية كاملة بدون بطاقة دفع. تقدر تضيف فريقك بعد الإنشاء.</p>
 
         <form className="panel stack" onSubmit={submit}>
           <Field label="اسمك">

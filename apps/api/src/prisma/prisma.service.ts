@@ -1,5 +1,6 @@
-import { Global, Injectable, Module, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Global, Injectable, Module, OnModuleDestroy } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { appDatabaseUrl } from '../config/database-url';
 
 export type Tx = Prisma.TransactionClient;
 
@@ -9,9 +10,10 @@ export interface DbScope {
 }
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
-  async onModuleInit() {
-    await this.$connect();
+export class PrismaService extends PrismaClient implements OnModuleDestroy {
+  constructor() {
+    // الاتصال يُفتح عند أول استعلام (أسرع في بدء التشغيل على Vercel)
+    super({ datasourceUrl: appDatabaseUrl() });
   }
 
   async onModuleDestroy() {
@@ -29,7 +31,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         await tx.$executeRaw`SELECT set_config('app.user_id', ${scope.userId}, true), set_config('app.workspace_id', ${scope.workspaceId ?? ''}, true)`;
         return fn(tx);
       },
-      { maxWait: 5_000, timeout: 20_000, isolationLevel },
+      { maxWait: 10_000, timeout: 20_000, isolationLevel },
     );
   }
 }

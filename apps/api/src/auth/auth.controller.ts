@@ -3,9 +3,9 @@ import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import type { AuthUser, HessaRequest } from '../common/context';
 import { clearAuthCookies, REFRESH_COOKIE, setAuthCookies } from '../common/cookies';
-import { ClientMeta, CurrentUser, Public } from '../common/decorators';
+import { AllowPendingPassword, ClientMeta, CurrentUser, Public } from '../common/decorators';
 import { AuthService, type ClientMetaInfo } from './auth.service';
-import { RequestOtpDto, UpdateMeDto, VerifyOtpDto } from './dto';
+import { ChangePasswordDto, LoginDto, UpdateMeDto } from './dto';
 
 @Controller('auth')
 export class AuthController {
@@ -19,21 +19,28 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  @Post('otp/request')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('login')
   @HttpCode(200)
-  request(@Body() dto: RequestOtpDto, @ClientMeta() meta: ClientMetaInfo) {
-    return this.auth.requestOtp(dto.phone, meta);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
-  @Post('otp/verify')
-  @HttpCode(200)
-  async verify(@Body() dto: VerifyOtpDto, @ClientMeta() meta: ClientMetaInfo, @Res({ passthrough: true }) res: Response) {
-    const tokens = await this.auth.verifyOtp(dto.phone, dto.code, dto.name, meta);
+  async login(@Body() dto: LoginDto, @ClientMeta() meta: ClientMetaInfo, @Res({ passthrough: true }) res: Response) {
+    const tokens = await this.auth.login(dto.identifier, dto.password, meta);
     setAuthCookies(res, tokens);
     return this.auth.me(tokens.userId);
+  }
+
+  @AllowPendingPassword()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('change-password')
+  @HttpCode(200)
+  async changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ChangePasswordDto,
+    @ClientMeta() meta: ClientMetaInfo,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const tokens = await this.auth.changePassword(user.id, dto.currentPassword, dto.newPassword, meta);
+    setAuthCookies(res, tokens);
+    return this.auth.me(user.id);
   }
 
   @Public()
@@ -62,6 +69,7 @@ export class AuthController {
     return { ok: true };
   }
 
+  @AllowPendingPassword()
   @Post('logout-all')
   @HttpCode(200)
   async logoutAll(@CurrentUser() user: AuthUser, @Res({ passthrough: true }) res: Response) {
@@ -70,6 +78,7 @@ export class AuthController {
     return { ok: true };
   }
 
+  @AllowPendingPassword()
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return this.auth.me(user.id);

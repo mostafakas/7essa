@@ -7,7 +7,9 @@ import { egpP, localPhone, num } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import type { GroupRow, StudentListItem } from '@/lib/types';
 import { useAction, useLoad } from '@/lib/use-load';
+import { downloadCsv, fetchAllPages } from '@/lib/csv';
 import { Guard } from '@/components/app-shell';
+import { CredentialsCard, type Credentials } from '@/components/credentials';
 import { Chip, Empty, ErrorNote, Field, Ledger, Loading, Modal, PageHead } from '@/components/ui';
 
 const STATUS_LABEL: Record<StudentListItem['status'], string> = {
@@ -24,6 +26,7 @@ interface RegisterResult {
   status: string;
   matchedExisting: boolean;
   siblingsInWorkspace: number;
+  guardianLogin: Credentials | null;
 }
 
 export default function StudentsPage() {
@@ -63,12 +66,33 @@ function Students() {
   );
 
   const pages = list.data ? Math.max(1, Math.ceil(list.data.total / 50)) : 1;
+  const exporter = useAction();
+
+  const exportCsv = () =>
+    void exporter.run(async () => {
+      const items = await fetchAllPages((p) =>
+        api<{ total: number; items: StudentListItem[] }>('/students', { query: { q: term, groupId, status, page: p } }),
+      );
+      downloadCsv(
+        `طلاب-${new Date().toISOString().slice(0, 10)}`,
+        ['الطالب', 'الكود', 'الصف', 'المدرسة', 'المجموعة', 'المادة', 'ولي الأمر', 'موبايل ولي الأمر', 'الحالة', 'الخصم %', 'موافقة ولي الأمر', 'متبقي الشهر (ج.م)'],
+        items.map((s) => [
+          s.fullName, s.code, s.grade, s.school, s.group.name, s.group.subject, s.guardianName, localPhone(s.guardianPhone),
+          STATUS_LABEL[s.status], s.discountPct, s.consent ? 'نعم' : 'لا',
+          s.due?.state === 'DUES' && s.due.remaining !== undefined ? (s.due.remaining / 100).toFixed(2) : s.due?.state === 'OK' ? 0 : '',
+        ]),
+      );
+    });
 
   return (
     <>
       <PageHead title="الطلاب" sub={list.data ? `${num(list.data.total)} اشتراك مطابق` : undefined}>
+        {list.data?.total ? (
+          <button className="btn quiet" onClick={exportCsv} disabled={exporter.busy}>{exporter.busy ? 'جارٍ التصدير…' : 'تصدير Excel'}</button>
+        ) : null}
         {can('students.write') ? <button className="btn" onClick={() => setOpen(true)}>سجّل طالبًا</button> : null}
       </PageHead>
+      <ErrorNote error={exporter.error} />
 
       <div className="form-grid" style={{ marginBottom: '1rem' }}>
         <Field label="بحث بالاسم أو الكود">
@@ -194,13 +218,14 @@ function RegisterForm({ groups, onDone }: { groups: GroupRow[]; onDone: () => vo
           {result.status === 'WAITLIST' ? <span>المجموعة مكتملة، فأُضيف الطالب لقائمة الانتظار.</span> : null}
           {result.matchedExisting ? <span>الطالب مسجل من قبل بنفس بيانات ولي الأمر، فرُبط بنفس الهوية بدل تكرارها.</span> : null}
           {result.siblingsInWorkspace ? <span>لديه {num(result.siblingsInWorkspace)} أخ/أخت مسجلون هنا، يمكنك مراجعة خصم الإخوة.</span> : null}
-          <span>أُرسل طلب موافقة لولي الأمر على رقمه.</span>
+          <span>أُرسل طلب موافقة لولي الأمر داخل حسابه على حصّة.</span>
           <div className="row">
             <Link className="btn quiet" href={`/app/students/${result.studentId}`}>ملف الطالب</Link>
             <Link className="btn quiet" href={`/print/card/${result.studentId}`} target="_blank">اطبع الكارنيه</Link>
           </div>
         </div>
       ) : null}
+      {result?.guardianLogin ? <CredentialsCard credentials={result.guardianLogin} title="بيانات دخول ولي الأمر" /> : null}
 
       <form className="stack" onSubmit={submit}>
         <div className="form-grid">

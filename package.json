@@ -2,7 +2,7 @@
   "name": "hessa-platform",
   "private": true,
   "version": "0.1.0",
-  "description": "منصة حصّة لإدارة التعليم الخاص في مصر",
+  "description": "منصة حصّة لإدارة السناتر والدروس الخصوصية في مصر",
   "workspaces": [
     "apps/api",
     "apps/web"
@@ -12,15 +12,14 @@
   },
   "scripts": {
     "setup:env": "node scripts/setup-env.mjs",
-    "db:up": "docker compose up -d postgres redis",
-    "db:setup": "npm run db:init -w apps/api && npm run db:security -w apps/api && npm run db:seed -w apps/api",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "db:studio": "npm run db:studio -w apps/api",
+    "db:new-migration": "npm run db:new-migration -w apps/api",
     "dev:api": "npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "test": "npm test -w apps/api",
     "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web",
     "build": "npm run build -w apps/api && npm run build -w apps/web"
-  },
-  "dependencies": {
-    "pg": "^8.23.0"
   }
 }

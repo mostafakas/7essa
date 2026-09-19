@@ -4,7 +4,7 @@ import { CSRF_COOKIE } from './cookies';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-function safeEqual(a: string, b: string) {
+export function safeEqual(a: string, b: string) {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   return ab.length === bb.length && timingSafeEqual(ab, bb);
@@ -14,7 +14,8 @@ function safeEqual(a: string, b: string) {
  * حماية CSRF بنمط Double-Submit + فحص Origin.
  * الواجهة تقرأ الكوكي hessa_csrf وترسله في الترويسة x-csrf-token مع كل طلب معدِّل.
  */
-export function csrfMiddleware(allowedOrigin: string, secure: boolean) {
+export function csrfMiddleware(allowedOrigins: string[], secure: boolean) {
+  const allowed = new Set(allowedOrigins);
   return (req: Request, res: Response, next: NextFunction) => {
     const cookie: string | undefined = req.cookies?.[CSRF_COOKIE];
     if (!cookie) {
@@ -23,7 +24,7 @@ export function csrfMiddleware(allowedOrigin: string, secure: boolean) {
     if (SAFE_METHODS.has(req.method)) return next();
 
     const origin = req.headers.origin;
-    if (origin && origin !== allowedOrigin) {
+    if (origin && !allowed.has(origin)) {
       return res.status(403).json({ statusCode: 403, message: 'مصدر الطلب غير مسموح' });
     }
     const header = req.headers['x-csrf-token'];

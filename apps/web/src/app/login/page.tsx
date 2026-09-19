@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
-import type { Me } from '@/lib/session';
+import { homeFor, type Me } from '@/lib/session';
 import { useAction } from '@/lib/use-load';
 import { Field } from '@/components/ui';
 
@@ -12,25 +12,16 @@ function safeNext(): string | null {
 }
 
 export default function LoginPage() {
-  const [step, setStep] = useState<'phone' | 'code'>('phone');
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
   const { busy, error, run } = useAction();
 
-  const requestCode = (e: FormEvent) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      await api('/auth/otp/request', { method: 'POST', body: { phone }, workspace: false });
-      setStep('code');
-    });
-  };
-
-  const verify = (e: FormEvent) => {
-    e.preventDefault();
-    void run(async () => {
-      const me = await api<Me>('/auth/otp/verify', { method: 'POST', body: { phone, code }, workspace: false });
-      const fallback = me.memberships.length ? '/app' : me.children ? '/family' : me.user.isPlatformAdmin ? '/platform' : '/start';
-      window.location.assign(safeNext() ?? fallback);
+      const me = await api<Me>('/auth/login', { method: 'POST', body: { identifier: identifier.trim(), password }, workspace: false });
+      window.location.assign(me.user.mustChangePassword ? '/account?required=1' : (safeNext() ?? homeFor(me)));
     });
   };
 
@@ -50,56 +41,47 @@ export default function LoginPage() {
       </section>
 
       <section className="auth-form">
-        {step === 'phone' ? (
-          <form onSubmit={requestCode} noValidate>
-            <h2>تسجيل الدخول</h2>
-            <p className="muted">نرسل رمز دخول من 6 أرقام إلى رقمك.</p>
-            <Field label="رقم الموبايل">
+        <form onSubmit={submit} noValidate>
+          <h2>تسجيل الدخول</h2>
+          <p className="muted">ادخل باسم المستخدم أو رقم الموبايل المسجل.</p>
+          <Field label="اسم المستخدم أو رقم الموبايل">
+            <input
+              className="input"
+              dir="ltr"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="hesham أو 01xxxxxxxxx"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              required
+              autoFocus
+            />
+          </Field>
+          <Field label="كلمة المرور">
+            <div className="row" style={{ gap: '0.4rem', flexWrap: 'nowrap' }}>
               <input
                 className="input"
                 dir="ltr"
-                inputMode="tel"
-                autoComplete="tel"
-                placeholder="01xxxxxxxxx"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                type={show ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 required
-                autoFocus
               />
-            </Field>
-            {error ? <div className="note error" role="alert">{error}</div> : null}
-            <button className="btn big" disabled={busy || phone.trim().length < 10}>
-              {busy ? 'جارٍ الإرسال…' : 'أرسل الرمز'}
-            </button>
-            <p className="faint">حسابك يُنشأ تلقائيًا عند أول دخول. أولياء الأمور يدخلون بالرقم المسجل في السنتر.</p>
-          </form>
-        ) : (
-          <form onSubmit={verify} noValidate>
-            <h2>أدخل الرمز</h2>
-            <p className="muted">
-              أرسلنا الرمز إلى <span className="num">{phone}</span>. صالح لمدة 5 دقائق.
-            </p>
-            <Field label="رمز الدخول">
-              <input
-                className="input otp-input"
-                dir="ltr"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                autoFocus
-              />
-            </Field>
-            {error ? <div className="note error" role="alert">{error}</div> : null}
-            <button className="btn big" disabled={busy || code.length !== 6}>
-              {busy ? 'جارٍ التحقق…' : 'دخول'}
-            </button>
-            <button type="button" className="btn ghost" onClick={() => { setStep('phone'); setCode(''); }}>
-              تغيير الرقم
-            </button>
-          </form>
-        )}
+              <button type="button" className="btn ghost" onClick={() => setShow((v) => !v)} aria-pressed={show}>
+                {show ? 'إخفاء' : 'إظهار'}
+              </button>
+            </div>
+          </Field>
+          {error ? <div className="note error" role="alert">{error}</div> : null}
+          <button className="btn big" disabled={busy || identifier.trim().length < 3 || !password}>
+            {busy ? 'جارٍ الدخول…' : 'دخول'}
+          </button>
+          <p className="faint">
+            الحسابات تُنشأ عن طريق السنتر أو إدارة المنصة. نسيت كلمة المرور؟ اطلب من السنتر أو إدارة المنصة إعادة تعيينها.
+          </p>
+        </form>
       </section>
     </div>
   );

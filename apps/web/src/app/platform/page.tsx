@@ -2,125 +2,144 @@
 
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import { fmtDate, num } from '@/lib/format';
-import { logout } from '@/lib/session';
-import { useAction, useLoad } from '@/lib/use-load';
-import { Chip, ErrorNote, Ledger, Loading } from '@/components/ui';
+import { ACCESS_LABEL, ACCESS_TONE, egp, fmtDate, fmtDateTime, fmtMonth, num } from '@/lib/format';
+import { actionLabel } from '@/lib/platform';
+import type { AccessReason } from '@/lib/session';
+import { useLoad } from '@/lib/use-load';
+import { Chip, Empty, ErrorNote, Ledger, Loading, PageHead } from '@/components/ui';
 
 interface Overview {
-  totals: {
-    users: number;
-    workspaces: number;
-    centers: number;
-    teachers: number;
-    active: number;
-    trial: number;
-    suspended: number;
-    activeStudents: number;
-    engaged: number;
-  };
-  workspaces: {
-    id: string;
-    name: string;
-    type: 'CENTER' | 'TEACHER';
-    status: 'TRIAL' | 'ACTIVE' | 'SUSPENDED';
-    plan: string;
-    trialEndsAt: string | null;
-    createdAt: string;
-    members: number;
-    activeStudents: number;
-    receipts30d: number;
-  }[];
+  workspaces: { total: number; byReason: Record<AccessReason, number>; byType: { CENTER: number; TEACHER: number } };
+  users: { total: number; admins: number; locked: number; noPassword: number; active30d: number };
+  activeStudents: number;
+  engaged: number;
+  mrr: string;
+  revenue: { month: string; total: string; count: number }[];
+  signups: { month: string; n: number }[];
+  trialsEnding: { id: string; name: string; until: string | null; daysLeft: number | null }[];
+  renewals: { id: string; name: string; until: string | null; reason: AccessReason; daysLeft: number | null }[];
+  recent: { id: string; action: string; createdAt: string; actor: string; workspace: string | null }[];
 }
 
-const STATUS = { TRIAL: 'تجريبي', ACTIVE: 'مفعّل', SUSPENDED: 'موقوف' } as const;
+/** آخر 12 شهرًا بترتيبها حتى تظهر الأشهر الفارغة */
+function lastMonths(n: number) {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - i, 1));
+    out.push(`${m.getUTCFullYear()}-${String(m.getUTCMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
 
-export default function PlatformPage() {
-  const data = useLoad(() => api<Overview>('/platform/overview', { workspace: false }), []);
-  const action = useAction();
+function Bars({ data, format }: { data: { month: string; value: number }[]; format: (v: number) => string }) {
+  const max = Math.max(1, ...data.map((d) => d.value));
+  return (
+    <>
+      <div className="bars" role="img" aria-label="رسم بياني شهري">
+        {data.map((d, i) => (
+          <div key={d.month} className={i === data.length - 1 ? 'today' : undefined} style={{ height: `${(d.value / max) * 100}%` }} title={`${fmtMonth(d.month)}: ${format(d.value)}`} />
+        ))}
+      </div>
+      <div className="bars-labels">{data.map((d) => <span key={d.month}>{d.month.slice(5)}</span>)}</div>
+    </>
+  );
+}
 
-  const setStatus = (id: string, status: string) =>
-    void action.run(async () => {
-      await api(`/platform/workspaces/${id}`, { method: 'PATCH', body: { status }, workspace: false });
-      await data.reload();
-    });
-
-  const extend = (id: string) =>
-    void action.run(async () => {
-      await api(`/platform/workspaces/${id}`, {
-        method: 'PATCH',
-        body: { trialEndsAt: new Date(Date.now() + 14 * 86_400_000).toISOString(), status: 'TRIAL' },
-        workspace: false,
-      });
-      await data.reload();
-    });
-
-  const t = data.data?.totals;
+export default function PlatformOverview() {
+  const o = useLoad(() => api<Overview>('/platform/overview', { workspace: false }), []);
+  const d = o.data;
+  const months = lastMonths(12);
+  const rev = new Map(d?.revenue.map((r) => [r.month, Number(r.total)]) ?? []);
+  const sign = new Map(d?.signups.map((r) => [r.month, r.n]) ?? []);
+  const thisMonth = months[months.length - 1];
 
   return (
     <>
-      <header className="top-bar">
-        <Link href="/" className="brand" style={{ padding: 0 }}>حصّة</Link>
-        <nav>
-          <span style={{ color: '#fff' }}>إدارة المنصة</span>
-          <button className="btn ghost" onClick={() => void logout()}>خروج</button>
-        </nav>
-      </header>
-      <main className="main" style={{ margin: '0 auto' }}>
+      <PageHead title="لوحة المؤشرات" sub="نظرة عامة على المنصة: أعداد مجمعة دون بيانات الطلاب أو مبالغ السناتر." >
+        <Link className="btn" href="/platform/workspaces?new=1">سنتر أو مدرس جديد</Link>
+        <Link className="btn quiet" href="/platform/users?new=1">مستخدم جديد</Link>
+      </PageHead>
+      <ErrorNote error={o.error} onRetry={o.reload} />
+      {o.loading && !d ? <Loading what="المؤشرات" /> : null}
+      {d ? (
         <div className="stack">
-          <h1>المشتركون</h1>
-          <p className="muted">أرقام تشغيلية مجمعة فقط. بيانات الطلاب والمبالغ داخل كل مساحة لا تظهر هنا.</p>
-          <ErrorNote error={data.error ?? action.error} onRetry={data.reload} />
-          {data.loading && !t ? <Loading what="الإحصاءات" /> : null}
-          {t ? (
-            <section className="panel board">
-              <div className="split-even">
-                <div>
-                  <h3>مساحات العمل</h3>
-                  <div className="big-figure num">{num(t.workspaces)}</div>
-                  <p>{num(t.centers)} سنتر و{num(t.teachers)} مدرس خاص. مفعّل {num(t.active)}، تجريبي {num(t.trial)}، موقوف {num(t.suspended)}.</p>
-                </div>
-                <div>
-                  <h3>نشطة فعليًا</h3>
-                  <div className="big-figure num">{num(t.engaged)}</div>
-                  <p>أصدرت إيصالًا واحدًا على الأقل خلال 30 يومًا.</p>
-                </div>
-                <div>
-                  <h3>الطلاب النشطون</h3>
-                  <div className="big-figure num">{num(t.activeStudents)}</div>
-                  <p>من إجمالي {num(t.users)} حساب مستخدم.</p>
-                </div>
-              </div>
+          <div className="kpis">
+            <Link className="kpi" href="/platform/workspaces"><span className="v num">{num(d.workspaces.total)}</span><span className="l">مساحة عمل ({num(d.workspaces.byType.CENTER)} سنتر، {num(d.workspaces.byType.TEACHER)} مدرس)</span></Link>
+            <Link className="kpi" href="/platform/workspaces?status=ACTIVE"><span className="v num">{num(d.workspaces.byReason.ACTIVE + d.workspaces.byReason.GRACE)}</span><span className="l">اشتراك مدفوع ساري</span></Link>
+            <Link className="kpi" href="/platform/workspaces?status=TRIAL"><span className="v num">{num(d.workspaces.byReason.TRIAL)}</span><span className="l">في الفترة التجريبية</span></Link>
+            <Link className={`kpi ${d.workspaces.byReason.EXPIRED + d.workspaces.byReason.TRIAL_ENDED ? 'alert' : ''}`} href="/platform/workspaces?due=expired">
+              <span className="v num">{num(d.workspaces.byReason.EXPIRED + d.workspaces.byReason.TRIAL_ENDED)}</span><span className="l">منتهية (عرض فقط)</span>
+            </Link>
+            <div className="kpi"><span className="v num">{egp(d.mrr)}</span><span className="l">الإيراد الشهري المتوقع (حسب الخطط)</span></div>
+            <Link className="kpi" href="/platform/billing"><span className="v num">{egp(rev.get(thisMonth) ?? 0)}</span><span className="l">محصل هذا الشهر</span></Link>
+            <div className="kpi"><span className="v num">{num(d.activeStudents)}</span><span className="l">طالب نشط على المنصة</span></div>
+            <div className="kpi"><span className="v num">{num(d.engaged)}</span><span className="l">مساحة نشطة فعليًا (آخر 30 يومًا)</span></div>
+            <Link className="kpi" href="/platform/users"><span className="v num">{num(d.users.total)}</span><span className="l">مستخدم ({num(d.users.active30d)} دخلوا آخر 30 يومًا)</span></Link>
+            <Link className={`kpi ${d.users.noPassword ? 'warn' : ''}`} href="/platform/users?kind=nopassword"><span className="v num">{num(d.users.noPassword)}</span><span className="l">حساب بلا كلمة مرور</span></Link>
+            <Link className={`kpi ${d.users.locked ? 'alert' : ''}`} href="/platform/users?kind=locked"><span className="v num">{num(d.users.locked)}</span><span className="l">حساب مقفول مؤقتًا</span></Link>
+            <Link className="kpi" href="/platform/users?kind=admin"><span className="v num">{num(d.users.admins)}</span><span className="l">عضو في فريق المنصة</span></Link>
+          </div>
+
+          <div className="split-even">
+            <section className="panel">
+              <h2>التحصيل الشهري</h2>
+              <Bars data={months.map((m) => ({ month: m, value: rev.get(m) ?? 0 }))} format={(v) => egp(v)} />
             </section>
-          ) : null}
-          {data.data?.workspaces.length ? (
-            <Ledger head={<tr><th>المساحة</th><th>النوع</th><th>الأعضاء</th><th>الطلاب</th><th>إيصالات 30 يومًا</th><th>الحالة</th><th /></tr>}>
-              {data.data.workspaces.map((w) => (
-                <tr key={w.id}>
-                  <td>{w.name}<div className="faint">منذ {fmtDate(w.createdAt)}، خطة {w.plan}</div></td>
-                  <td>{w.type === 'CENTER' ? 'سنتر' : 'مدرس'}</td>
-                  <td className="num">{num(w.members)}</td>
-                  <td className="num">{num(w.activeStudents)}</td>
-                  <td className="num">{w.receipts30d ? num(w.receipts30d) : <span className="mark">0</span>}</td>
-                  <td>
-                    <Chip tone={w.status === 'ACTIVE' ? 'ok' : w.status === 'TRIAL' ? 'warn' : 'bad'}>{STATUS[w.status]}</Chip>
-                    {w.status === 'TRIAL' && w.trialEndsAt ? <div className="faint">حتى {fmtDate(w.trialEndsAt)}</div> : null}
-                  </td>
-                  <td>
-                    <div className="row" style={{ gap: '0.25rem' }}>
-                      {w.status !== 'ACTIVE' ? <button className="btn quiet" disabled={action.busy} onClick={() => setStatus(w.id, 'ACTIVE')}>تفعيل</button> : null}
-                      {w.status === 'TRIAL' ? <button className="btn ghost" disabled={action.busy} onClick={() => extend(w.id)}>مد التجربة 14 يومًا</button> : null}
-                      {w.status !== 'SUSPENDED' ? (
-                        <button className="btn ghost" disabled={action.busy} onClick={() => window.confirm(`إيقاف «${w.name}»؟ سيُمنع فريقها من الدخول.`) && setStatus(w.id, 'SUSPENDED')}>إيقاف</button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </Ledger>
-          ) : null}
+            <section className="panel">
+              <h2>مساحات جديدة شهريًا</h2>
+              <Bars data={months.map((m) => ({ month: m, value: sign.get(m) ?? 0 }))} format={(v) => num(v)} />
+            </section>
+          </div>
+
+          <div className="split-even">
+            <section className="panel stack-sm">
+              <h2>تجارب تنتهي خلال أسبوع</h2>
+              {d.trialsEnding.length ? (
+                <Ledger head={<tr><th>المساحة</th><th>تنتهي</th><th>باقي</th></tr>}>
+                  {d.trialsEnding.map((t) => (
+                    <tr key={t.id}>
+                      <td><Link href={`/platform/workspaces/${t.id}`}>{t.name}</Link></td>
+                      <td>{t.until ? fmtDate(t.until) : '—'}</td>
+                      <td className="num">{num(t.daysLeft)} يوم</td>
+                    </tr>
+                  ))}
+                </Ledger>
+              ) : <Empty>لا توجد تجارب قريبة الانتهاء.</Empty>}
+            </section>
+            <section className="panel stack-sm">
+              <h2>تجديدات مطلوبة</h2>
+              {d.renewals.length ? (
+                <Ledger head={<tr><th>المساحة</th><th>الحالة</th><th>حتى</th></tr>}>
+                  {d.renewals.map((r) => (
+                    <tr key={r.id}>
+                      <td><Link href={`/platform/workspaces/${r.id}`}>{r.name}</Link></td>
+                      <td><Chip tone={ACCESS_TONE[r.reason]}>{ACCESS_LABEL[r.reason]}</Chip></td>
+                      <td>{r.until ? fmtDate(r.until) : '—'}</td>
+                    </tr>
+                  ))}
+                </Ledger>
+              ) : <Empty>لا توجد اشتراكات قريبة الانتهاء.</Empty>}
+            </section>
+          </div>
+
+          <section className="panel stack-sm">
+            <div className="row-between"><h2>آخر إجراءات فريق المنصة</h2><Link href="/platform/audit?scope=platform">السجل كاملًا</Link></div>
+            {d.recent.length ? (
+              <Ledger head={<tr><th>الوقت</th><th>بواسطة</th><th>العملية</th><th>المساحة</th></tr>}>
+                {d.recent.map((r) => (
+                  <tr key={r.id}>
+                    <td className="faint nowrap">{fmtDateTime(r.createdAt)}</td>
+                    <td>{r.actor}</td>
+                    <td>{actionLabel(r.action)}</td>
+                    <td>{r.workspace ?? '—'}</td>
+                  </tr>
+                ))}
+              </Ledger>
+            ) : <Empty>لا توجد إجراءات بعد.</Empty>}
+          </section>
         </div>
-      </main>
+      ) : null}
     </>
   );
 }

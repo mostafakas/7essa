@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { cairoMonth, egpP, fmtMonth, localPhone, num } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import type { GroupRow } from '@/lib/types';
+import { downloadCsv } from '@/lib/csv';
 import { useLoad } from '@/lib/use-load';
 import { Guard } from '@/components/app-shell';
 import { Empty, ErrorNote, Field, Ledger, Loading, MonthInput, PageHead } from '@/components/ui';
@@ -50,6 +51,20 @@ function Dues() {
   return (
     <>
       <PageHead title="المتأخرات" sub={dues.data ? `${num(dues.data.count)} طالب، إجمالي المتبقي ${egpP(dues.data.totalRemaining)}` : undefined}>
+        {dues.data?.items.length ? (
+          <button
+            className="btn quiet no-print"
+            onClick={() =>
+              downloadCsv(
+                `متأخرات-${month}`,
+                ['الطالب', 'الكود', 'المجموعة', 'المدرس', 'ولي الأمر', 'موبايل ولي الأمر', 'المدفوع (ج.م)', 'المتبقي (ج.م)'],
+                dues.data!.items.map((i) => [i.student, i.code, i.group, i.teacher, i.guardianName, localPhone(i.guardianPhone), (i.paid / 100).toFixed(2), (i.remaining / 100).toFixed(2)]),
+              )
+            }
+          >
+            تصدير Excel
+          </button>
+        ) : null}
         <button className="btn ghost no-print" onClick={() => window.print()}>اطبع القائمة</button>
       </PageHead>
       <div className="form-grid no-print" style={{ marginBottom: '1rem' }}>

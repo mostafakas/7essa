@@ -651,3 +651,29 @@ dialog.modal::backdrop { background: rgba(20, 30, 26, 0.5); }
 .top-bar nav a[aria-current='page'] { background: var(--paper); color: var(--board); font-weight: 600; }
 .top-bar .btn.ghost { color: var(--board-ink); }
 .narrow { max-width: 900px; margin: 0 auto; padding: 1.5rem clamp(1rem, 3vw, 2rem) 3rem; }
+
+/* ───────── لوحة إدارة المنصة */
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.9rem; }
+.kpi {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-panel);
+  padding: 0.9rem 1rem;
+  display: grid;
+  gap: 0.15rem;
+  text-decoration: none;
+  color: inherit;
+}
+a.kpi:hover { border-color: var(--pen); }
+.kpi .v { font-family: var(--font-display); font-size: var(--t-2xl); font-weight: 600; color: var(--board); line-height: 1.15; }
+.kpi .l { font-size: var(--t-sm); color: var(--ink-2); }
+.kpi.alert .v { color: var(--redpen); }
+.kpi.warn .v { color: #8a6d00; }
+.bars-labels { display: flex; gap: 3px; direction: ltr; font-size: var(--t-xs); color: var(--ink-3); margin-top: 0.25rem; }
+.bars-labels > span { flex: 1; text-align: center; overflow: hidden; white-space: nowrap; }
+.dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; margin: 0; }
+.dl dt { color: var(--ink-2); font-size: var(--t-sm); }
+.dl dd { margin: 0; }
+.danger-zone { border-color: var(--redpen); }
+.danger-zone > h2 { color: var(--redpen); }

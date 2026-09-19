@@ -1,23 +1,24 @@
-import { IsOptional, IsString, Length, Matches, MaxLength } from 'class-validator';
+import { IsString, Length, MaxLength } from 'class-validator';
 
-export class RequestOtpDto {
+export class LoginDto {
+  /** اسم المستخدم أو رقم الموبايل */
   @IsString()
-  @MaxLength(32)
-  phone!: string;
+  @Length(3, 64)
+  identifier!: string;
+
+  @IsString()
+  @MaxLength(128)
+  password!: string;
 }
 
-export class VerifyOtpDto {
+export class ChangePasswordDto {
   @IsString()
-  @MaxLength(32)
-  phone!: string;
+  @MaxLength(128)
+  currentPassword!: string;
 
-  @Matches(/^\d{6}$/, { message: 'الرمز 6 أرقام' })
-  code!: string;
-
-  @IsOptional()
   @IsString()
-  @Length(2, 80)
-  name?: string;
+  @Length(8, 128)
+  newPassword!: string;
 }
 
 export class UpdateMeDto {

@@ -9,6 +9,7 @@ import { useSession } from '@/lib/session';
 import type { DueView, GroupRow } from '@/lib/types';
 import { useAction, useLoad } from '@/lib/use-load';
 import { Guard } from '@/components/app-shell';
+import { CredentialsCard, type Credentials } from '@/components/credentials';
 import { Chip, ErrorNote, Field, Ledger, Loading, Modal, PageHead, Tabs } from '@/components/ui';
 
 interface Profile {
@@ -247,6 +248,7 @@ function StudentProfile() {
               ) : <p className="faint">لا توجد إيصالات.</p>
             ) : null}
           </section>
+          {can('students.write') ? <AccountsPanel studentId={s.id} studentName={s.fullName} guardianName={s.guardianName} /> : null}
         </div>
       ) : null}
 
@@ -289,5 +291,77 @@ function StudentProfile() {
         ) : null}
       </Modal>
     </>
+  );
+}
+
+interface AccountView {
+  name: string;
+  login: string;
+  hasPassword: boolean;
+  lastLoginAt: string | null;
+  status: 'ACTIVE' | 'DISABLED';
+}
+
+/** حسابات الدخول: ولي الأمر يتابع الحضور والدرجات، والطالب يحل الامتحانات من موبايله */
+function AccountsPanel({ studentId, studentName, guardianName }: { studentId: string; studentName: string; guardianName: string }) {
+  const accounts = useLoad(() => api<{ guardian: AccountView; student: AccountView | null }>(`/students/${studentId}/accounts`), [studentId]);
+  const action = useAction();
+  const [issued, setIssued] = useState<{ name: string; title: string; credentials: Credentials } | null>(null);
+  const [username, setUsername] = useState('');
+
+  const guardianCreds = () =>
+    window.confirm('إصدار كلمة مرور مؤقتة جديدة لولي الأمر؟') &&
+    void action.run(async () => {
+      const c = await api<Credentials>(`/students/${studentId}/guardian-credentials`, { method: 'POST' });
+      setIssued({ name: guardianName, title: 'بيانات دخول ولي الأمر', credentials: c });
+      await accounts.reload();
+    });
+
+  const studentCreds = () =>
+    void action.run(async () => {
+      const c = await api<Credentials>(`/students/${studentId}/student-account`, { method: 'POST', body: username.trim() ? { username: username.trim() } : {} });
+      setIssued({ name: studentName, title: 'بيانات دخول الطالب', credentials: c });
+      setUsername('');
+      await accounts.reload();
+    });
+
+  const row = (label: string, a: AccountView) => (
+    <tr>
+      <td>{label}<div className="faint">{a.name}</div></td>
+      <td className="num" dir="ltr" style={{ textAlign: 'right' }}>{a.login || '—'}</td>
+      <td>
+        {a.status === 'DISABLED' ? <Chip tone="bad">موقوف</Chip> : a.lastLoginAt ? <Chip tone="ok">آخر دخول {fmtDateTime(a.lastLoginAt)}</Chip> : a.hasPassword ? <Chip tone="warn">لم يدخل بعد</Chip> : <Chip tone="bad">بلا كلمة مرور</Chip>}
+      </td>
+    </tr>
+  );
+
+  return (
+    <section className="panel stack-sm">
+      <h2>حسابات الدخول</h2>
+      <ErrorNote error={accounts.error ?? action.error} onRetry={accounts.reload} />
+      {issued ? <CredentialsCard credentials={issued.credentials} name={issued.name} title={issued.title} /> : null}
+      {accounts.data ? (
+        <>
+          <Ledger head={<tr><th>الحساب</th><th>اسم المستخدم</th><th>الحالة</th></tr>}>
+            {row('ولي الأمر', accounts.data.guardian)}
+            {accounts.data.student ? row('الطالب', accounts.data.student) : null}
+          </Ledger>
+          <div className="row">
+            {!accounts.data.guardian.lastLoginAt ? (
+              <button className="btn quiet" disabled={action.busy} onClick={guardianCreds}>بيانات دخول ولي الأمر</button>
+            ) : null}
+            {!accounts.data.student ? (
+              <>
+                <input className="input" dir="ltr" style={{ width: 'auto', minWidth: 160 }} placeholder="اسم مستخدم (اختياري)" value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} />
+                <button className="btn quiet" disabled={action.busy} onClick={studentCreds}>إنشاء حساب للطالب</button>
+              </>
+            ) : !accounts.data.student.lastLoginAt ? (
+              <button className="btn quiet" disabled={action.busy} onClick={studentCreds}>بيانات دخول جديدة للطالب</button>
+            ) : null}
+          </div>
+          <p className="faint">بعد أول دخول لا يستطيع السنتر تغيير كلمة المرور؛ يتم ذلك من إدارة المنصة حفاظًا على أمان الحساب.</p>
+        </>
+      ) : null}
+    </section>
   );
 }

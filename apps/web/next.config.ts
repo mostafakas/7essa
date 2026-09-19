@@ -3,10 +3,10 @@ import type { NextConfig } from 'next';
 const api = process.env.API_INTERNAL_URL ?? 'http://localhost:4000';
 
 const config: NextConfig = {
-  output: 'standalone',
   poweredByHeader: false,
   reactStrictMode: true,
-  // الواجهة والخادم على نفس النطاق: الكوكيز httpOnly تعمل دون CORS
+  // الواجهة والخادم على نفس النطاق: الكوكيز httpOnly تعمل دون CORS.
+  // على Vercel يمرر middleware.ts الطلبات مع عنوان العميل، وهذا احتياطي للتطوير المحلي.
   async rewrites() {
     return [{ source: '/api/:path*', destination: `${api}/api/:path*` }];
   },

@@ -1,10 +1,12 @@
 /**
  * بيانات تجريبية للتطوير فقط.
- * تعمل بحساب المالك (MIGRATION_DATABASE_URL) لأن التطبيق نفسه مقيد بسياسات RLS.
+ * تعمل بحساب المالك (DATABASE_URL_UNPOOLED) لأن التطبيق نفسه مقيد بسياسات RLS.
+ * كل الحسابات التجريبية كلمة مرورها: Hessa2026
  *   npm run db:seed            (يرفض إن وُجدت بيانات)
  *   npm run db:seed -- --force (يضيف فوق الموجود)
  */
 import { PrismaClient, type Prisma } from '@prisma/client';
+import { hashPassword } from '../src/auth/password';
 import { generateSlots } from '../src/academics/schedule';
 import { dueAfterDiscount, toDecimalString } from '../src/common/money';
 import { addDays, cairoDateOf, cairoMonthOf, shiftMonth, weekdayOf } from '../src/common/time';
@@ -13,12 +15,15 @@ if (process.env.NODE_ENV === 'production') {
   console.error('لا تُشغَّل البيانات التجريبية في الإنتاج.');
   process.exit(1);
 }
-const url = process.env.MIGRATION_DATABASE_URL;
+const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
-  console.error('MIGRATION_DATABASE_URL غير مضبوط.');
+  console.error('DATABASE_URL_UNPOOLED غير مضبوط.');
   process.exit(1);
 }
 const prisma = new PrismaClient({ datasourceUrl: url });
+
+const DEMO_PASSWORD = 'Hessa2026';
+let demoHash: string | null = null;
 
 // مولد ثابت حتى تتكرر نفس البيانات في كل تشغيل
 let seed = 20260917;
@@ -41,10 +46,18 @@ const FAMILY = ['عبد الله', 'السيد', 'منصور', 'الشافعي',
 const SCHOOLS = ['مدرسة النصر الثانوية', 'مدرسة الأورمان', 'مدرسة السعيدية', 'مدرسة الإبراهيمية'];
 
 async function user(local: string, name: string, extra: Partial<Prisma.UserCreateInput> = {}) {
+  demoHash ??= await hashPassword(DEMO_PASSWORD);
+  // مالك المنصة يُنشأ غالبًا قبل البيانات التجريبية (db:migrate) بنفس اسم المستخدم: نستخدمه كما هو
+  if (extra.username) {
+    const existing = await prisma.user.findUnique({ where: { username: extra.username } });
+    if (existing) return existing;
+  }
   return prisma.user.upsert({
     where: { phone: phone(local) },
     update: {},
-    create: { phone: phone(local), name, phoneVerifiedAt: new Date(), ...extra },
+    create: {
+      phone: phone(local), name, passwordHash: demoHash, mustChangePassword: false, lastLoginAt: new Date(), ...extra,
+    },
   });
 }
 
@@ -61,18 +74,21 @@ async function main() {
   const prevMonth = shiftMonth(month, -1);
 
   // ───── الحسابات
-  await user('01000000000', 'إدارة منصة حصّة', { isPlatformAdmin: true });
-  const owner = await user('01000000001', 'أ. هشام عبد الرحمن');
-  const reception = await user('01000000002', 'منى سعيد');
-  const accountant = await user('01000000003', 'محمود فتحي');
-  const tAhmed = await user('01000000004', 'أ. أحمد سمير');
-  const tSara = await user('01000000005', 'أ. سارة كمال');
-  const assistant = await user('01000000006', 'يوسف علي');
-  const tKhaled = await user('01000000007', 'أ. خالد منصور');
+  await user('01000000000', 'إدارة منصة حصّة', { username: 'admin', isPlatformAdmin: true, platformRole: 'SUPER_ADMIN' });
+  const owner = await user('01000000001', 'أ. هشام عبد الرحمن', { username: 'hesham' });
+  const reception = await user('01000000002', 'منى سعيد', { username: 'mona' });
+  const accountant = await user('01000000003', 'محمود فتحي', { username: 'mahmoud' });
+  const tAhmed = await user('01000000004', 'أ. أحمد سمير', { username: 'ahmed' });
+  const tSara = await user('01000000005', 'أ. سارة كمال', { username: 'sara' });
+  const assistant = await user('01000000006', 'يوسف علي', { username: 'youssef' });
+  const tKhaled = await user('01000000007', 'أ. خالد منصور', { username: 'khaled' });
 
   // ───── السنتر
   const center = await prisma.workspace.create({
-    data: { type: 'CENTER', name: 'سنتر النور التعليمي', status: 'ACTIVE', plan: 'center-pro', receptionMaxDiscountPct: 10, lateAfterMinutes: 15 },
+    data: {
+      type: 'CENTER', name: 'سنتر النور التعليمي', status: 'ACTIVE', plan: 'center-pro', receptionMaxDiscountPct: 10, lateAfterMinutes: 15,
+      paidUntil: new Date(Date.now() + 60 * 86_400_000), governorate: 'الجيزة',
+    },
   });
   const m = async (userId: string, role: Prisma.MembershipCreateManyInput['role'], supervisorMembershipId?: string) =>
     prisma.membership.create({ data: { workspaceId: center.id, userId, role, supervisorMembershipId } });
@@ -286,17 +302,17 @@ async function main() {
   await prisma.workspace.update({ where: { id: teacherWs.id }, data: { receiptSeq: 1 } });
 
   console.log('\nتم إنشاء البيانات التجريبية ✔');
-  console.log('سجّل الدخول بأي رقم مما يلي؛ رمز الدخول يظهر في سجل الخادم (وضع التطوير):');
+  console.log(`كلمة المرور لكل الحسابات: ${DEMO_PASSWORD}`);
   console.table([
-    { الدور: 'مالك المنصة', الرقم: '01000000000' },
-    { الدور: 'مالك السنتر', الرقم: '01000000001' },
-    { الدور: 'الاستقبال', الرقم: '01000000002' },
-    { الدور: 'المحاسب', الرقم: '01000000003' },
-    { الدور: 'مدرس (فيزياء)', الرقم: '01000000004' },
-    { الدور: 'مدرسة (إنجليزي)', الرقم: '01000000005' },
-    { الدور: 'مساعد المدرس', الرقم: '01000000006' },
-    { الدور: 'مدرس خاص (رياضيات)', الرقم: '01000000007' },
-    { الدور: 'ولي أمر (ابن في السنتر وعند المدرس الخاص)', الرقم: '01100000001' },
+    { الدور: 'مالك المنصة (لوحة الإدارة)', الدخول: 'admin (كلمة مروره من BOOTSTRAP_ADMIN_PASSWORD إن أُنشئ قبل البيانات التجريبية)' },
+    { الدور: 'مالك السنتر', الدخول: 'hesham' },
+    { الدور: 'الاستقبال', الدخول: 'mona' },
+    { الدور: 'المحاسب', الدخول: 'mahmoud' },
+    { الدور: 'مدرس (فيزياء)', الدخول: 'ahmed' },
+    { الدور: 'مدرسة (إنجليزي)', الدخول: 'sara' },
+    { الدور: 'مساعد المدرس', الدخول: 'youssef' },
+    { الدور: 'مدرس خاص (رياضيات)', الدخول: 'khaled' },
+    { الدور: 'ولي أمر (ابن في السنتر وعند المدرس الخاص)', الدخول: '01100000001' },
   ]);
   console.log(`الإيصالات: ${receiptSeq} — الحصص الأولى تبدأ ${start}`);
 }

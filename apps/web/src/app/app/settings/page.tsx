@@ -3,10 +3,33 @@
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from '@/lib/api';
-import { fmtDate, num } from '@/lib/format';
-import { logout, useSession } from '@/lib/session';
-import { useAction } from '@/lib/use-load';
+import { ACCESS_LABEL, ACCESS_TONE, fmtDate, num } from '@/lib/format';
+import { logout, useSession, type AccessState } from '@/lib/session';
+import { useAction, useLoad } from '@/lib/use-load';
 import { Chip, Field, PageHead } from '@/components/ui';
+
+interface Subscription {
+  planCode: string;
+  planName: string;
+  maxStudents: number | null;
+  maxStaff: number | null;
+  status: string;
+  trialEndsAt: string | null;
+  paidUntil: string | null;
+  access: AccessState;
+  usage: { activeStudents: number; staff: number };
+  supportPhone: string | null;
+}
+
+function Usage({ label, used, max }: { label: string; used: number; max: number | null }) {
+  const pct = max ? Math.min(100, Math.round((used / max) * 100)) : 0;
+  return (
+    <div>
+      <div className="row-between"><span>{label}</span><span className="num">{num(used)}{max ? ` / ${num(max)}` : ' (بلا حد)'}</span></div>
+      {max ? <div className="fill"><i style={{ width: `${pct}%`, background: pct >= 90 ? 'var(--redpen)' : undefined }} /></div> : null}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { current, me, can, reload } = useSession();
@@ -16,6 +39,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const ws = useAction();
   const account = useAction();
+  const sub = useLoad(() => api<Subscription>('/workspaces/current/subscription'), [current?.workspace.id]);
 
   useEffect(() => {
     setWelcome(new URLSearchParams(window.location.search).get('welcome') === '1');
@@ -107,6 +131,27 @@ export default function SettingsPage() {
           </form>
         ) : null}
 
+        {sub.data ? (
+          <section className="panel stack">
+            <h2>الاشتراك</h2>
+            <div className="row">
+              <Chip tone="info">خطة {sub.data.planName}</Chip>
+              <Chip tone={ACCESS_TONE[sub.data.access.reason]}>{ACCESS_LABEL[sub.data.access.reason]}</Chip>
+            </div>
+            {sub.data.access.until ? (
+              <p className="muted">
+                {sub.data.access.reason === 'TRIAL' ? 'تنتهي التجربة' : sub.data.access.reason === 'GRACE' ? 'تنتهي فترة السماح' : 'ساري حتى'} {fmtDate(sub.data.access.until)}
+                {sub.data.access.daysLeft !== null ? ` (باقي ${num(sub.data.access.daysLeft)} يوم)` : ''}
+              </p>
+            ) : null}
+            <Usage label="الطلاب النشطون" used={sub.data.usage.activeStudents} max={sub.data.maxStudents} />
+            <Usage label="أعضاء الفريق" used={sub.data.usage.staff} max={sub.data.maxStaff} />
+            <p className="faint">
+              للتجديد أو ترقية الخطة تواصل مع إدارة منصة حصّة{sub.data.supportPhone ? <> على <span className="num">{sub.data.supportPhone}</span></> : null}.
+            </p>
+          </section>
+        ) : null}
+
         <section className="panel stack">
           <h2>حسابي</h2>
           <form className="stack-sm" onSubmit={saveName}>
@@ -116,8 +161,9 @@ export default function SettingsPage() {
             <div className="row"><button className="btn quiet" disabled={account.busy || myName.trim() === me.user.name}>احفظ الاسم</button></div>
           </form>
           <p className="muted">
-            تدخل برقم <span className="num">{me.user.phone.replace(/^\+20/, '0')}</span>، وأنت عضو في {num(me.memberships.length)} مساحة عمل.
+            تدخل باسم المستخدم <span className="num" dir="ltr">{me.user.username ?? (me.user.phone ?? '').replace(/^\+20/, '0')}</span>، وأنت عضو في {num(me.memberships.length)} مساحة عمل.
           </p>
+          <div className="row"><Link className="btn quiet" href="/account">تغيير كلمة المرور</Link></div>
           <div className="row">
             <button className="btn quiet" onClick={() => void logout()}>تسجيل الخروج</button>
             <button className="btn danger" onClick={logoutAll} disabled={account.busy}>الخروج من كل الأجهزة</button>

@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '@/lib/api';
-import { ROLE_LABEL } from '@/lib/format';
-import { logout, useSession } from '@/lib/session';
+import { fmtDate, ROLE_LABEL } from '@/lib/format';
+import { logout, useSession, type CurrentWorkspace } from '@/lib/session';
+import { AnnouncementsBar } from './announcements';
 import { Loading } from './ui';
 
 interface NavItem {
@@ -33,7 +34,7 @@ const NAV: NavItem[] = [
 const GROUPS: Record<NavItem['group'], string> = { day: '', money: 'المال', teach: 'التعليم', admin: 'الإدارة' };
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { me, current, loading, can, switchWorkspace } = useSession();
+  const { me, current, workspaceError, loading, can, switchWorkspace } = useSession();
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
@@ -53,15 +54,33 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (loading) return <main className="main"><Loading what="حسابك" /></main>;
   if (!me) return null;
   if (!current) {
-    if (typeof window !== 'undefined') window.location.replace(me.children ? '/family' : '/start');
+    // مساحة موقوفة أو غير متاحة: رسالة واضحة بدل صفحة فارغة
+    if (workspaceError && me.memberships.length) {
+      return (
+        <main className="narrow stack">
+          <h1>تعذر فتح مساحة العمل</h1>
+          <div className="note error">{workspaceError}</div>
+          {me.config.supportPhone ? <p>للتواصل مع إدارة المنصة: <span className="num">{me.config.supportPhone}</span></p> : null}
+          <div className="row">
+            {me.memberships.length > 1 ? (
+              <select className="select" style={{ width: 'auto' }} defaultValue="" onChange={(e) => e.target.value && switchWorkspace(e.target.value)}>
+                <option value="" disabled>مساحة عمل أخرى</option>
+                {me.memberships.map((m) => <option key={m.workspace.id} value={m.workspace.id}>{m.workspace.name}</option>)}
+              </select>
+            ) : null}
+            {me.children ? <Link className="btn quiet" href="/family">أبنائي</Link> : null}
+            {me.user.platformRole ? <Link className="btn quiet" href="/platform">إدارة المنصة</Link> : null}
+            <button className="btn ghost" onClick={() => void logout()}>تسجيل الخروج</button>
+          </div>
+        </main>
+      );
+    }
+    if (typeof window !== 'undefined') window.location.replace(me.children ? '/family' : me.user.platformRole ? '/platform' : '/start');
     return null;
   }
 
   const items = NAV.filter((i) => !i.perm || (Array.isArray(i.perm) ? i.perm.some(can) : can(i.perm)));
   const isActive = (href: string) => (href === '/app' ? path === '/app' : path.startsWith(href));
-  const trialDays = current.workspace.trialEndsAt
-    ? Math.ceil((new Date(current.workspace.trialEndsAt).getTime() - Date.now()) / 86_400_000)
-    : null;
 
   return (
     <div className="shell">
@@ -108,24 +127,45 @@ export function AppShell({ children }: { children: ReactNode }) {
             الإشعارات {unread ? <span className="count">{unread}</span> : null}
           </Link>
           {me.children ? <Link href="/family">أبنائي</Link> : null}
-          {me.user.isPlatformAdmin ? <Link href="/platform">إدارة المنصة</Link> : null}
-          <Link href="/start">مساحة عمل جديدة</Link>
+          <Link href="/account" aria-current={path === '/account' ? 'page' : undefined}>حسابي وكلمة المرور</Link>
+          {me.user.platformRole ? <Link href="/platform">إدارة المنصة</Link> : null}
+          {me.config.allowSelfSignup ? <Link href="/start">مساحة عمل جديدة</Link> : null}
         </nav>
 
         <div className="rail-foot">
-          {current.workspace.status === 'TRIAL' && trialDays !== null ? (
-            <div className="note warn" style={{ color: '#5c4a00' }}>
-              {trialDays > 0 ? `باقي ${trialDays} يوم في الفترة التجريبية` : 'انتهت الفترة التجريبية'}
-            </div>
+          {current.access.reason === 'TRIAL' && current.access.daysLeft !== null ? (
+            <div className="note warn" style={{ color: '#5c4a00' }}>باقي {current.access.daysLeft} يوم في الفترة التجريبية</div>
           ) : null}
           <div style={{ color: '#fff' }}>{me.user.name}</div>
           <div style={{ color: '#9fb8ae' }}>{ROLE_LABEL[current.me.role] ?? current.me.role}</div>
           <button className="btn ghost" onClick={() => void logout()}>تسجيل الخروج</button>
         </div>
       </aside>
-      <main className="main" id="main">{children}</main>
+      <main className="main" id="main">
+        <AccessBanner current={current} supportPhone={me.config.supportPhone} />
+        <AnnouncementsBar />
+        {children}
+      </main>
     </div>
   );
+}
+
+/** تنبيه حالة الاشتراك: فترة السماح أو قرب الانتهاء أو وضع العرض فقط */
+function AccessBanner({ current, supportPhone }: { current: CurrentWorkspace; supportPhone: string | null }) {
+  const a = current.access;
+  const contact = supportPhone ? ` للتجديد: ${supportPhone}` : ' تواصل مع إدارة المنصة للتجديد.';
+  if (a.mode === 'READ_ONLY') {
+    const why = a.reason === 'TRIAL_ENDED' ? 'انتهت الفترة التجريبية' : a.reason === 'EXPIRED' ? 'انتهى الاشتراك' : 'الحساب متوقف مؤقتًا';
+    return <div className="note error no-print" role="alert" style={{ marginBottom: '1rem' }}><strong>{why}.</strong> مساحة العمل متاحة للعرض والطباعة فقط ولا يمكن تسجيل أي عمليات جديدة.{contact}</div>;
+  }
+  if (a.reason === 'GRACE') {
+    return <div className="note warn no-print" role="alert" style={{ marginBottom: '1rem' }}>انتهى الاشتراك وأنت في فترة سماح باقي منها {a.daysLeft} يوم، بعدها يصبح الحساب للعرض فقط.{contact}</div>;
+  }
+  if ((a.reason === 'ACTIVE' || a.reason === 'TRIAL') && a.daysLeft !== null && a.daysLeft <= 7 && a.until) {
+    const what = a.reason === 'TRIAL' ? 'الفترة التجريبية' : 'الاشتراك';
+    return <div className="note warn no-print" style={{ marginBottom: '1rem' }}>{what} ينتهي {fmtDate(a.until)} (باقي {a.daysLeft} يوم).{contact}</div>;
+  }
+  return null;
 }
 
 /** غلاف صفحة يتطلب صلاحية (الخادم يفرضها أيضًا؛ هذا للتجربة فقط) */

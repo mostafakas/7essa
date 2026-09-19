@@ -3,13 +3,17 @@
 
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // rhel-openssl-3.0.x = بيئة تشغيل Vercel (Node 22)
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
+// DATABASE_URL: اتصال المالك عبر الـpooler (تضيفه Vercel تلقائيًا عند ربط Neon)
+// DATABASE_URL_UNPOOLED: اتصال مباشر بحساب المالك للترحيلات فقط
+// وقت التشغيل يتصل التطبيق بدور hessa_app المقيد (انظر src/config/database-url.ts)
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("MIGRATION_DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 enum WorkspaceType {
@@ -109,6 +113,32 @@ enum SettlementStatus {
   PAID
 }
 
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+/// أدوار فريق إدارة المنصة
+enum PlatformRole {
+  SUPER_ADMIN
+  SUPPORT
+  FINANCE
+  VIEWER
+}
+
+enum AnnouncementAudience {
+  ALL
+  STAFF
+  OWNERS
+  FAMILIES
+}
+
+enum AnnouncementLevel {
+  INFO
+  WARNING
+  CRITICAL
+}
+
 enum QuestionType {
   MCQ
   TRUE_FALSE
@@ -123,32 +153,30 @@ enum ExamStatus {
 // ───────────── الهوية (عامة على مستوى المنصة) ─────────────
 
 model User {
-  id              String    @id @default(uuid()) @db.Uuid
-  phone           String    @unique
-  name            String
-  phoneVerifiedAt DateTime?
-  isPlatformAdmin Boolean   @default(false)
-  createdAt       DateTime  @default(now())
+  id                 String        @id @default(uuid()) @db.Uuid
+  // الدخول باسم المستخدم أو رقم الموبايل + كلمة المرور
+  phone              String?       @unique
+  username           String?       @unique
+  name               String
+  passwordHash       String?
+  mustChangePassword Boolean       @default(true)
+  status             UserStatus    @default(ACTIVE)
+  phoneVerifiedAt    DateTime?
+  // isPlatformAdmin يبقى متزامنًا مع platformRole (يُقرأ في رمز الدخول ودوال قاعدة البيانات)
+  isPlatformAdmin    Boolean       @default(false)
+  platformRole       PlatformRole?
+  failedLogins       Int           @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  passwordChangedAt  DateTime?
+  notes              String?
+  createdAt          DateTime      @default(now())
 
   memberships Membership[]
   sessions    RefreshSession[]
   guardianOf  Student[]        @relation("GuardianStudents")
 
   @@map("users")
-}
-
-model OtpChallenge {
-  id         String    @id @default(uuid()) @db.Uuid
-  phone      String
-  codeHash   String
-  expiresAt  DateTime
-  attempts   Int       @default(0)
-  consumedAt DateTime?
-  ip         String?
-  createdAt  DateTime  @default(now())
-
-  @@index([phone, createdAt])
-  @@map("otp_challenges")
 }
 
 model RefreshSession {
@@ -192,9 +220,19 @@ model Workspace {
   receiptSeq              Int             @default(0)
   receptionMaxDiscountPct Int             @default(10)
   lateAfterMinutes        Int             @default(15)
+  // الاشتراك المدفوع: الوصول الكامل حتى هذا التاريخ ثم فترة سماح
+  paidUntil               DateTime?
+  suspendReason           String?
+  governorate             String?
+  contactPhone            String?
+  // تجاوز حدود الخطة لهذه المساحة (null = حسب الخطة)
+  maxStudents             Int?
+  maxStaff                Int?
   createdAt               DateTime        @default(now())
 
   memberships Membership[]
+  payments    PlatformPayment[]
+  notes       WorkspaceNote[]
 
   @@map("workspaces")
 }
@@ -561,6 +599,92 @@ model ExamAttempt {
 
   @@unique([examId, studentId])
   @@map("exam_attempts")
+}
+
+// ───────────── إدارة المنصة ─────────────
+
+/// خطط الاشتراك (Workspace.plan = Plan.code)
+model Plan {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique
+  name         String
+  monthlyPrice Decimal  @default(0) @db.Decimal(12, 2)
+  yearlyPrice  Decimal? @db.Decimal(12, 2)
+  maxStudents  Int?
+  maxStaff     Int?
+  description  String?
+  active       Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@map("plans")
+}
+
+/// مدفوعات اشتراكات السناتر والمدرسين للمنصة (تسجيل يدوي)
+model PlatformPayment {
+  id           String        @id @default(uuid()) @db.Uuid
+  workspaceId  String        @db.Uuid
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  amount       Decimal       @db.Decimal(12, 2)
+  months       Int
+  method       PaymentMethod
+  planCode     String?
+  paidAt       DateTime      @default(now())
+  periodStart  DateTime
+  periodEnd    DateTime
+  note         String?
+  recordedById String        @db.Uuid
+  createdAt    DateTime      @default(now())
+
+  @@index([workspaceId, paidAt])
+  @@index([paidAt])
+  @@map("platform_payments")
+}
+
+/// ملاحظات فريق المنصة على مساحة عمل (متابعة ومبيعات ودعم)
+model WorkspaceNote {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @db.Uuid
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  authorUserId String    @db.Uuid
+  body         String
+  createdAt    DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@map("workspace_notes")
+}
+
+/// إعلانات تظهر كشريط أعلى التطبيق لشريحة من المستخدمين
+model Announcement {
+  id          String               @id @default(uuid()) @db.Uuid
+  title       String
+  body        String
+  audience    AnnouncementAudience @default(ALL)
+  level       AnnouncementLevel    @default(INFO)
+  startsAt    DateTime             @default(now())
+  endsAt      DateTime?
+  active      Boolean              @default(true)
+  createdById String               @db.Uuid
+  createdAt   DateTime             @default(now())
+
+  @@index([active, startsAt])
+  @@map("announcements")
+}
+
+/// إعدادات المنصة: صف واحد (id = 1)
+model PlatformSettings {
+  id                 Int       @id @default(1)
+  allowSelfSignup    Boolean   @default(false)
+  defaultTrialDays   Int       @default(30)
+  graceDays          Int       @default(7)
+  maxOwnedWorkspaces Int       @default(5)
+  supportPhone       String?
+  maintenanceMessage String?
+  lastCronAt         DateTime?
+  lastCronResult     Json?
+  updatedAt          DateTime  @updatedAt
+
+  @@map("platform_settings")
 }
 
 // ───────────── التدقيق ─────────────

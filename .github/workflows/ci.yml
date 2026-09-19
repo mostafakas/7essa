@@ -1,0 +1,68 @@
+# فحص كل دفعة وطلب دمج: الأنواع والاختبارات والبناء.
+# النشر نفسه يتم تلقائيًا عبر تكامل Vercel مع GitHub (معاينة لكل فرع، وإنتاج من main).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      DATABASE_URL_UNPOOLED: postgresql://ci:ci@localhost:5432/ci
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npx prisma generate
+        working-directory: apps/api
+      - name: فحص الأنواع
+        run: npm run typecheck
+      - name: الاختبارات
+        run: npm test
+      - name: البناء
+        run: npm run build
+
+  migrations:
+    # يطبق كل الترحيلات على قاعدة نظيفة للتأكد أنها تعمل قبل وصولها للإنتاج
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: owner
+          POSTGRES_PASSWORD: owner
+          POSTGRES_DB: hessa
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U owner" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://owner:owner@localhost:5432/hessa
+      DATABASE_URL_UNPOOLED: postgresql://owner:owner@localhost:5432/hessa
+      APP_DB_PASSWORD: ci-app-password-0123456789
+      BOOTSTRAP_ADMIN_USERNAME: admin
+      BOOTSTRAP_ADMIN_PASSWORD: CiAdmin2026
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - working-directory: apps/api
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+          npx tsx src/scripts/setup-db.ts
+          npx tsx prisma/seed.ts

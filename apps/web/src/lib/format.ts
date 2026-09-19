@@ -76,4 +76,27 @@ export const CONTRACT_LABEL: Record<string, string> = {
 export const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
 /** رقم مصري محلي للعرض من صيغة +20 */
-export const localPhone = (p: string) => (p.startsWith('+20') ? `0${p.slice(3)}` : p);
+export const localPhone = (p: string | null | undefined) => (!p ? '—' : p.startsWith('+20') ? `0${p.slice(3)}` : p);
+
+export const PLATFORM_ROLE_LABEL: Record<string, string> = {
+  SUPER_ADMIN: 'مالك المنصة',
+  SUPPORT: 'الدعم',
+  FINANCE: 'المالية',
+  VIEWER: 'مشاهد',
+};
+
+export const WS_STATUS_LABEL: Record<string, string> = { TRIAL: 'تجريبي', ACTIVE: 'مفعّل', PAUSED: 'متوقف مؤقتًا', SUSPENDED: 'موقوف' };
+
+export const ACCESS_LABEL: Record<string, string> = {
+  ACTIVE: 'اشتراك ساري',
+  TRIAL: 'فترة تجريبية',
+  GRACE: 'فترة سماح',
+  TRIAL_ENDED: 'انتهت التجربة',
+  EXPIRED: 'انتهى الاشتراك',
+  PAUSED: 'متوقف (عرض فقط)',
+  SUSPENDED: 'موقوف',
+};
+
+export const ACCESS_TONE: Record<string, 'ok' | 'warn' | 'bad' | 'info'> = {
+  ACTIVE: 'ok', TRIAL: 'info', GRACE: 'warn', TRIAL_ENDED: 'bad', EXPIRED: 'bad', PAUSED: 'warn', SUSPENDED: 'bad',
+};

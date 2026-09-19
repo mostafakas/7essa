@@ -3,25 +3,33 @@
 كل المسارات تبدأ بـ `/api/v1`. الطلبات المعدِّلة تتطلب الترويسة `x-csrf-token` (قيمة الكوكي `hessa_csrf`).
 المسارات التي عمود صلاحيتها اسم صلاحية تتطلب الترويسة `x-workspace-id`، ويُرفض الطلب إن لم يكن الدور يملكها.
 مسارات «مسجل» تحتاج جلسة فقط، وبوابة الأسرة تعمل بسياق المستخدم وسياسات قاعدة البيانات.
+مسارات `/platform/*` تتطلب عضوية فريق المنصة، وعمود الصلاحية فيها صلاحية المنصة (بدونه = أي عضو في الفريق، قراءة).
+
+رموز أخطاء مهمة في `code`:
+- `PASSWORD_CHANGE_REQUIRED` (403): كلمة مرور مؤقتة، كل المسارات مغلقة عدا `/auth/change-password` و`/auth/me` والخروج.
+- `READ_ONLY` (403): المساحة للعرض فقط (انتهت التجربة أو الاشتراك)، طلبات القراءة تعمل.
+- `WORKSPACE_BLOCKED` (403): المساحة موقوفة من إدارة المنصة.
 
 المبالغ المحسوبة (المتبقي، الإجماليات، بنود الكشف) أعداد صحيحة بالقرش، وحقول الإيصالات والعقود نصوص عشرية بالجنيه.
 
 | الطريقة | المسار | الصلاحية | الوظيفة |
 |---|---|---|---|
 | GET | `/auth/csrf` | عام | تهيئة كوكي الحماية |
-| POST | `/auth/otp/request` | عام (حد معدل) | طلب رمز الدخول |
-| POST | `/auth/otp/verify` | عام (حد معدل) | التحقق وإنشاء الجلسة |
+| POST | `/auth/login` | عام (10/دقيقة) | `{ identifier, password }` — اسم مستخدم أو موبايل؛ قفل 15 دقيقة بعد 5 محاولات |
+| POST | `/auth/change-password` | مسجل | `{ currentPassword, newPassword }` — ينهي الجلسات الأخرى |
 | POST | `/auth/refresh` | عام (حد معدل) | تدوير الجلسة |
 | POST | `/auth/logout` | عام | تسجيل الخروج |
 | POST | `/auth/logout-all` | مسجل | الخروج من كل الأجهزة |
-| GET | `/auth/me` | مسجل | الحساب والعضويات وعدد الأبناء |
+| GET | `/auth/me` | مسجل | الحساب والعضويات وعدد الأبناء وإعدادات المنصة العامة |
 | PATCH | `/auth/me` | مسجل | تعديل الاسم |
-| POST | `/workspaces` | مسجل | إنشاء مساحة عمل (تجربة 30 يومًا) |
-| GET | `/workspaces/current` | workspace.view | المساحة الحالية وصلاحياتي |
+| POST | `/workspaces` | مسجل | إنشاء مساحة عمل (إن سمحت الإعدادات بالتسجيل الذاتي) |
+| GET | `/workspaces/current` | workspace.view | المساحة الحالية وصلاحياتي وحالة الوصول |
+| GET | `/workspaces/current/subscription` | workspace.view | الخطة والحدود والاستخدام وتاريخ الانتهاء |
 | PATCH | `/workspaces/current` | workspace.manage | الإعدادات |
 | GET | `/workspaces/current/teachers` | academics.read | قائمة المدرسين |
 | GET | `/workspaces/current/members` | staff.manage | الفريق |
-| POST | `/workspaces/current/members` | staff.manage | إضافة عضو |
+| POST | `/workspaces/current/members` | staff.manage | إضافة عضو (يرجع بيانات دخول مؤقتة للحساب الجديد) |
+| POST | `/workspaces/current/members/:id/credentials` | staff.manage | كلمة مؤقتة جديدة لعضو لم يدخل بعد |
 | PATCH | `/workspaces/current/members/:id` | staff.manage | تغيير الدور أو الحالة أو المشرف |
 | GET | `/workspaces/current/audit` | staff.manage | سجل العمليات |
 | GET | `/academics/halls` | academics.read | القاعات |
@@ -37,7 +45,7 @@
 | POST | `/academics/sessions` | academics.write | حصة إضافية |
 | PATCH | `/academics/sessions/:id` | academics.write | تغيير موعد |
 | POST | `/academics/sessions/:id/cancel` | academics.write | إلغاء مع إشعار الأسر |
-| POST | `/students` | students.write | تسجيل طالب (هوية موحدة) |
+| POST | `/students` | students.write | تسجيل طالب (هوية موحدة) ← بيانات دخول ولي الأمر إن كان جديدًا |
 | GET | `/students?q&groupId&status&page` | students.read | البحث |
 | GET | `/students/by-code/:code` | students.read | الطالب بالكود |
 | GET | `/students/:id` | students.read | ملف الطالب |
@@ -45,6 +53,9 @@
 | POST | `/students/:id/card/reissue` | students.write | كارنيه بدل فاقد |
 | PATCH | `/students/enrollments/:id` | students.write | الحالة أو الخصم |
 | POST | `/students/enrollments/:id/transfer` | students.write | نقل لمجموعة أخرى |
+| GET | `/students/:id/accounts` | students.write | حسابا ولي الأمر والطالب وحالة دخولهما |
+| POST | `/students/:id/guardian-credentials` | students.write | كلمة مؤقتة لولي أمر لم يدخل بعد |
+| POST | `/students/:id/student-account` | students.write | إنشاء حساب للطالب أو كلمة مؤقتة جديدة له |
 | GET | `/attendance/today` | attendance.record | حصص اليوم مع العدادات |
 | POST | `/attendance/scan` | attendance.record | تسجيل حضور بالرمز أو الكود |
 | POST | `/attendance/sync` | attendance.record | مزامنة عمليات دون اتصال (حتى 500) |
@@ -105,8 +116,41 @@
 | POST | `/family/attempts/:id/submit` | مسجل | التسليم والتصحيح |
 | GET | `/notifications` | مسجل | آخر 50 إشعارًا |
 | POST | `/notifications/read` | مسجل | تعليم كمقروء |
-| GET | `/platform/overview` | مالك المنصة | أرقام مجمعة |
-| PATCH | `/platform/workspaces/:id` | مالك المنصة | الحالة والخطة والتجربة |
+| GET | `/platform/whoami` | عضو الفريق | دوري وصلاحياتي في فريق المنصة |
+| GET | `/platform/overview` | عضو الفريق | المؤشرات: المساحات حسب الحالة، الإيراد، التجارب والتجديدات القريبة، آخر الإجراءات |
+| GET | `/platform/audit?scope&action&workspaceId&actorId&page` | عضو الفريق | سجل العمليات عبر المنصة |
+| GET | `/platform/system` | عضو الفريق | صحة النظام: دور القاعدة وRLS والأسرار وآخر تشغيل يومي |
+| GET | `/platform/settings` | عضو الفريق | إعدادات المنصة |
+| PATCH | `/platform/settings` | platform.settings.manage | التسجيل الذاتي، أيام التجربة والسماح، رقم الدعم، رسالة الصيانة |
+| GET | `/platform/workspaces?q&status&type&plan&due&page` | عضو الفريق | المساحات مع المالك والاستخدام وحالة الوصول |
+| POST | `/platform/workspaces` | platform.workspaces.manage | إنشاء مساحة مع مالكها (جديد أو موجود) ← بيانات دخول مؤقتة |
+| GET | `/platform/workspaces/:id` | عضو الفريق | التفاصيل والفريق والمدفوعات والملاحظات |
+| PATCH | `/platform/workspaces/:id` | حسب الحقل | البيانات والحالة (workspaces.manage)، الخطة والحدود والدفع (billing.manage) |
+| POST | `/platform/workspaces/:id/extend-trial` | platform.workspaces.manage | تمديد التجربة بعدد أيام |
+| POST | `/platform/workspaces/:id/members` | platform.workspaces.manage | إضافة عضو (مستخدم موجود أو جديد) |
+| PATCH | `/platform/workspaces/:id/members/:mid` | platform.workspaces.manage | الدور أو الحالة أو المشرف |
+| POST | `/platform/workspaces/:id/notes` | platform.workspaces.manage | ملاحظة داخلية |
+| DELETE | `/platform/workspaces/:id/notes/:noteId` | platform.workspaces.manage | حذف ملاحظة |
+| POST | `/platform/workspaces/:id/payments` | platform.billing.manage | تسجيل دفعة ← يمد الاشتراك ويفعّل المساحة |
+| GET | `/platform/workspaces/:id/audit?page` | عضو الفريق | سجل عمليات المساحة |
+| GET | `/platform/users?q&kind&status&page` | عضو الفريق | كل الحسابات مع الحالة والارتباطات |
+| POST | `/platform/users` | platform.users.manage | إنشاء حساب (ودور في فريق المنصة لمالكها فقط) |
+| GET | `/platform/users/:id` | عضو الفريق | الحساب والعضويات والأبناء والجلسات والسجل |
+| PATCH | `/platform/users/:id` | platform.users.manage | الاسم والرقم واسم المستخدم والحالة والملاحظات والدور |
+| POST | `/platform/users/:id/reset-password` | platform.users.manage | كلمة مرور جديدة (مؤقتة أو محددة) وإنهاء الجلسات |
+| POST | `/platform/users/:id/revoke-sessions` | platform.users.manage | الخروج من كل الأجهزة |
+| POST | `/platform/users/:id/unlock` | platform.users.manage | فك القفل المؤقت |
+| GET | `/platform/plans` | عضو الفريق | الخطط مع عدد المساحات |
+| POST | `/platform/plans` | platform.billing.manage | خطة جديدة |
+| PATCH | `/platform/plans/:id` | platform.billing.manage | الأسعار والحدود والإتاحة |
+| GET | `/platform/payments?from&to&workspaceId&page` | عضو الفريق | المدفوعات مع الإجمالي |
+| DELETE | `/platform/payments/:id` | platform.settings.manage | حذف دفعة مسجلة بالخطأ |
+| GET | `/platform/announcements` | عضو الفريق | كل الإعلانات |
+| POST | `/platform/announcements` | platform.content.manage | نشر إعلان (مع إشعار اختياري) |
+| PATCH | `/platform/announcements/:id` | platform.content.manage | تعديل أو إيقاف |
+| DELETE | `/platform/announcements/:id` | platform.content.manage | حذف |
+| GET | `/announcements/active` | مسجل | الإعلانات السارية لي ورسالة الصيانة |
+| GET | `/cron/daily` | `Bearer CRON_SECRET` | المهمة اليومية (Vercel Cron) |
 | GET | `/health` | عام | فحص الخدمة وقاعدة البيانات |
 
-إجمالي المسارات: 100.
+إجمالي المسارات: 138.

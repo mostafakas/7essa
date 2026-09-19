@@ -1,16 +1,29 @@
 import { z } from 'zod';
 
 const secret = z.string().min(32, 'يجب ألا يقل السر عن 32 حرفًا');
+const optional = (s: z.ZodString) => z.preprocess((v) => (v === '' ? undefined : v), s.optional());
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().default(4000),
+
+  // قاعدة البيانات (Neon عبر Vercel Marketplace أو Postgres محلي)
   DATABASE_URL: z.string().startsWith('postgres'),
-  REDIS_URL: z.string().startsWith('redis'),
+  // كلمة مرور دور التطبيق المقيد hessa_app (يُشتق منها اتصال التشغيل)
+  APP_DB_PASSWORD: optional(z.string().min(12)),
+  // بديل صريح: رابط كامل لدور التطبيق
+  APP_DATABASE_URL: optional(z.string().startsWith('postgres')),
+
   JWT_ACCESS_SECRET: secret,
-  OTP_PEPPER: secret,
   QR_SECRET: secret,
-  WEB_ORIGIN: z.string().url(),
+  // يرسله Vercel Cron في ترويسة Authorization
+  CRON_SECRET: optional(z.string().min(16)),
+  // سر مشترك بين الواجهة والخادم لتمرير عنوان العميل الحقيقي
+  PROXY_SHARED_SECRET: optional(z.string().min(24)),
+  REQUIRE_PROXY: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+
+  // نطاق الواجهة (يقبل أكثر من نطاق مفصولة بفاصلة)
+  WEB_ORIGIN: z.string().min(8),
   COOKIE_SECURE: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
 });
@@ -22,26 +35,25 @@ export function env(): Env {
   if (!cached) {
     const parsed = schema.safeParse(process.env);
     if (!parsed.success) {
-      console.error('إعدادات البيئة غير صحيحة:', parsed.error.flatten().fieldErrors);
-      process.exit(1);
+      const msg = `إعدادات البيئة غير صحيحة: ${JSON.stringify(parsed.error.flatten().fieldErrors)}`;
+      console.error(msg);
+      throw new Error(msg);
     }
-    if (parsed.data.NODE_ENV === 'production' && !parsed.data.COOKIE_SECURE) {
-      console.error('COOKIE_SECURE يجب أن تكون true في الإنتاج');
-      process.exit(1);
+    if (parsed.data.NODE_ENV === 'production') {
+      if (!parsed.data.COOKIE_SECURE) throw new Error('COOKIE_SECURE يجب أن تكون true في الإنتاج');
+      if (!parsed.data.APP_DB_PASSWORD && !parsed.data.APP_DATABASE_URL) {
+        throw new Error('APP_DB_PASSWORD مطلوب في الإنتاج حتى يعمل التطبيق بدور hessa_app المقيد (RLS)');
+      }
     }
     cached = parsed.data;
   }
   return cached;
 }
 
-export function redisConnection() {
-  const u = new URL(env().REDIS_URL);
-  return {
-    host: u.hostname,
-    port: Number(u.port || 6379),
-    username: u.username || undefined,
-    password: u.password ? decodeURIComponent(u.password) : undefined,
-    tls: u.protocol === 'rediss:' ? {} : undefined,
-    maxRetriesPerRequest: null,
-  };
+/** قائمة نطاقات الواجهة المسموحة */
+export function webOrigins(): string[] {
+  return env()
+    .WEB_ORIGIN.split(',')
+    .map((s) => s.trim().replace(/\/$/, ''))
+    .filter(Boolean);
 }

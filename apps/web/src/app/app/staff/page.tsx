@@ -7,6 +7,7 @@ import { useSession } from '@/lib/session';
 import type { Member } from '@/lib/types';
 import { useAction, useLoad } from '@/lib/use-load';
 import { Guard } from '@/components/app-shell';
+import { CredentialsCard, type Credentials } from '@/components/credentials';
 import { Chip, ErrorNote, Field, Ledger, Loading, Modal, PageHead, Tabs } from '@/components/ui';
 
 interface AuditRow {
@@ -60,7 +61,14 @@ const ACTION_LABEL: Record<string, string> = {
   'user.rename': 'تعديل الاسم',
   'auth.login': 'تسجيل دخول',
   'auth.refresh_reuse': 'تنبيه أمني: إعادة استخدام جلسة',
+  'user.credentials_issue': 'إصدار بيانات دخول',
+  'student.account_create': 'إنشاء حساب طالب',
+  'platform.workspace_create': 'إنشاء المساحة من إدارة المنصة',
   'platform.workspace_update': 'تعديل من إدارة المنصة',
+  'platform.trial_extend': 'تمديد التجربة من إدارة المنصة',
+  'platform.payment_record': 'تسجيل دفعة اشتراك',
+  'platform.member_add': 'إضافة عضو من إدارة المنصة',
+  'platform.member_update': 'تعديل عضو من إدارة المنصة',
 };
 
 const ASSIGNABLE: Record<string, string[]> = {
@@ -84,6 +92,7 @@ function Staff() {
   const members = useLoad(() => api<Member[]>('/workspaces/current/members'), [current?.workspace.id]);
   const audit = useLoad(() => (tab === 'audit' ? api<AuditRow[]>('/workspaces/current/audit') : Promise.resolve(null)), [tab, current?.workspace.id]);
   const [invite, setInvite] = useState(false);
+  const [issued, setIssued] = useState<{ name: string; credentials: Credentials } | null>(null);
   const action = useAction();
   const roles = ASSIGNABLE[current?.me.role ?? ''] ?? [];
   const teachers = (members.data ?? []).filter((m) => m.role === 'TEACHER' && m.status === 'ACTIVE');
@@ -94,6 +103,14 @@ function Staff() {
       await members.reload();
     });
 
+  const issue = (m: Member) =>
+    window.confirm(`إصدار كلمة مرور مؤقتة جديدة لـ ${m.name}؟ أي كلمة سابقة لم تُستخدم ستتوقف.`) &&
+    void action.run(async () => {
+      const c = await api<Credentials>(`/workspaces/current/members/${m.membershipId}/credentials`, { method: 'POST' });
+      setIssued({ name: m.name, credentials: c });
+      await members.reload();
+    });
+
   return (
     <>
       <PageHead title="الفريق والسجل" sub="كل عضو يرى فقط ما يخص دوره، وكل حركة مهمة تُسجَّل ولا يمكن تعديلها أو حذفها.">
@@ -101,17 +118,18 @@ function Staff() {
       </PageHead>
       <Tabs<Tab> value={tab} onChange={setTab} items={[{ id: 'team', label: 'الفريق' }, { id: 'audit', label: 'سجل العمليات' }]} />
       <ErrorNote error={action.error} />
+      {issued ? <div style={{ marginBottom: '1rem' }}><CredentialsCard credentials={issued.credentials} name={issued.name} /></div> : null}
 
       {tab === 'team' ? (
         <>
           <ErrorNote error={members.error} onRetry={members.reload} />
           {members.loading && !members.data ? <Loading what="الفريق" /> : null}
           {members.data ? (
-            <Ledger head={<tr><th>الاسم</th><th>الموبايل</th><th>الدور</th><th>يتبع</th><th>الحالة</th><th /></tr>}>
+            <Ledger head={<tr><th>الاسم</th><th>الدخول</th><th>الدور</th><th>يتبع</th><th>الحالة</th><th /></tr>}>
               {members.data.map((m) => (
                 <tr key={m.membershipId} className={m.status === 'DISABLED' ? 'is-void' : undefined}>
                   <td>{m.name} {m.isMe ? <Chip tone="info">أنت</Chip> : null}</td>
-                  <td className="num">{localPhone(m.phone)}</td>
+                  <td className="num" dir="ltr" style={{ textAlign: 'right' }}>{m.login ?? localPhone(m.phone)}</td>
                   <td>
                     {!m.isMe && roles.includes(m.role) ? (
                       <select className="select" style={{ width: 'auto' }} value={m.role} disabled={action.busy} onChange={(e) => update(m, { role: e.target.value })}>
@@ -132,16 +150,23 @@ function Staff() {
                   </td>
                   <td>
                     {!m.isMe && roles.includes(m.role) ? (
-                      <button className="btn ghost" disabled={action.busy} onClick={() => update(m, { status: m.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })}>
-                        {m.status === 'ACTIVE' ? 'إيقاف الحساب' : 'إعادة التفعيل'}
-                      </button>
+                      <span className="row" style={{ gap: '0.3rem' }}>
+                        <button className="btn ghost" disabled={action.busy} onClick={() => update(m, { status: m.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })}>
+                          {m.status === 'ACTIVE' ? 'إيقاف العضوية' : 'إعادة التفعيل'}
+                        </button>
+                        {!m.activated && m.status === 'ACTIVE' ? (
+                          <button className="btn ghost" disabled={action.busy} onClick={() => issue(m)}>بيانات دخول جديدة</button>
+                        ) : null}
+                      </span>
                     ) : null}
                   </td>
                 </tr>
               ))}
             </Ledger>
           ) : null}
-          <p className="faint" style={{ marginTop: '0.75rem' }}>إيقاف العضو يمنعه فورًا من دخول مساحة العمل دون حذف أي بيانات سجلها.</p>
+          <p className="faint" style={{ marginTop: '0.75rem' }}>
+            إيقاف العضو يمنعه فورًا من دخول مساحة العمل دون حذف أي بيانات سجلها. بعد أول دخول للعضو، إعادة تعيين كلمة مروره تتم من إدارة المنصة.
+          </p>
         </>
       ) : (
         <>
@@ -165,30 +190,40 @@ function Staff() {
       )}
 
       <Modal open={invite} title="إضافة عضو للفريق" onClose={() => setInvite(false)}>
-        {invite ? <InviteForm roles={roles} teachers={teachers} onDone={() => { setInvite(false); void members.reload(); }} /> : null}
+        {invite ? (
+          <InviteForm
+            roles={roles}
+            teachers={teachers}
+            onDone={(r) => {
+              setInvite(false);
+              if (r.credentials) setIssued({ name: r.name, credentials: r.credentials });
+              void members.reload();
+            }}
+          />
+        ) : null}
       </Modal>
     </>
   );
 }
 
-function InviteForm({ roles, teachers, onDone }: { roles: string[]; teachers: Member[]; onDone: () => void }) {
+function InviteForm({ roles, teachers, onDone }: { roles: string[]; teachers: Member[]; onDone: (r: { name: string; credentials: Credentials | null }) => void }) {
   const [f, setF] = useState({ name: '', phone: '', role: roles.includes('RECEPTION') ? 'RECEPTION' : roles[0] ?? '', supervisorMembershipId: '' });
   const { busy, error, run } = useAction();
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      await api('/workspaces/current/members', {
+      const r = await api<{ credentials: Credentials | null }>('/workspaces/current/members', {
         method: 'POST',
         body: { ...f, supervisorMembershipId: f.role === 'ASSISTANT' ? f.supervisorMembershipId : undefined },
       });
-      onDone();
+      onDone({ name: f.name, credentials: r.credentials });
     });
   };
   return (
     <form className="stack" onSubmit={submit}>
       <div className="form-grid">
         <Field label="الاسم"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required minLength={2} /></Field>
-        <Field label="رقم الموبايل" hint="يدخل به العضو بعد إضافته"><input className="input" dir="ltr" inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} required /></Field>
+        <Field label="رقم الموبايل" hint="يدخل به العضو مع كلمة مرور مؤقتة تظهر لك بعد الإضافة"><input className="input" dir="ltr" inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} required /></Field>
         <Field label="الدور">
           <select className="select" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
             {roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
@@ -205,7 +240,7 @@ function InviteForm({ roles, teachers, onDone }: { roles: string[]; teachers: Me
       </div>
       {f.role === 'OWNER' ? <div className="note warn">المالك يملك كل الصلاحيات بما فيها إدارة المالية والفريق.</div> : null}
       {error ? <div className="note error">{error}</div> : null}
-      <button className="btn" disabled={busy}>أضف العضو وأبلغه</button>
+      <button className="btn" disabled={busy}>أضف العضو</button>
     </form>
   );
 }

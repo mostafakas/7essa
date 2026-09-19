@@ -7,6 +7,7 @@ import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, MaxLen
 import { randomInt } from 'node:crypto';
 import { makeCardToken } from '../attendance/qr-token';
 import { AuditService } from '../audit/audit.service';
+import { CredentialsService, type IssuedCredentials, loginOf } from '../auth/credentials.service';
 import type { WorkspaceCtx } from '../common/context';
 import { RequirePermission, Ws } from '../common/decorators';
 import { can } from '../common/permissions';
@@ -17,6 +18,7 @@ import { cairoMonthOf } from '../common/time';
 import { env } from '../config/env';
 import { dueViews } from '../finance/dues.repo';
 import { NotificationsService } from '../notifications/notifications.module';
+import { LimitsService } from '../platform/limits.service';
 import { PrismaService, type Tx } from '../prisma/prisma.service';
 
 const MANAGERS = new Set(['OWNER', 'MANAGER']);
@@ -71,6 +73,12 @@ class TransferDto {
   groupId!: string;
 }
 
+class StudentAccountDto {
+  /** اسم مستخدم يختاره السنتر، أو يُولد تلقائيًا */
+  @IsOptional() @IsString() @MaxLength(32)
+  username?: string;
+}
+
 class CodeParam {
   @Matches(/^\d{6}$/)
   code!: string;
@@ -82,6 +90,8 @@ export class StudentsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly notify: NotificationsService,
+    private readonly limits: LimitsService,
+    private readonly credentials: CredentialsService,
   ) {}
 
   /**
@@ -113,6 +123,12 @@ export class StudentsService {
         SELECT app_match_student(${guardian.id}::uuid, ${fullName}, ${grade})::text AS id`;
       let studentId = match?.id ?? null;
       const matchedExisting = Boolean(studentId);
+
+      // حد الخطة: لا يُحسب الطالب مرتين إن كان نشطًا بالفعل في مجموعة أخرى هنا
+      const alreadyActive = studentId
+        ? (await tx.enrollment.count({ where: { studentId, workspaceId: ws.workspaceId, status: 'ACTIVE' } })) > 0
+        : false;
+      await this.limits.assertCanAddStudent(tx, ws.workspaceId, alreadyActive);
 
       if (studentId) {
         const dup = await tx.enrollment.findUnique({ where: { groupId_studentId: { groupId: group!.id, studentId } } });
@@ -150,7 +166,16 @@ export class StudentsService {
       body: `مجموعة ${result.group.name}. افتح تطبيق حصّة للموافقة على التسجيل ومتابعة الحضور والدرجات.`,
     });
 
+    // ولي أمر جديد: تصدر له بيانات دخول تُطبع وتُسلم مع الكارنيه
+    let guardianLogin: IssuedCredentials | null = null;
+    if (!guardian.passwordHash) {
+      guardianLogin = await this.credentials.setPassword(guardian.id, {
+        actorUserId: ws.userId, workspaceId: ws.workspaceId, ip: ws.ip, action: 'user.credentials_issue',
+      });
+    }
+
     return {
+      guardianLogin,
       studentId: result.student.id,
       enrollmentId: result.enrollment.id,
       code: result.enrollment.code,
@@ -365,6 +390,76 @@ export class StudentsService {
     });
   }
 
+  /** حسابات الدخول المرتبطة بالطالب: ولي الأمر وحساب الطالب نفسه */
+  async accounts(ws: WorkspaceCtx, studentId: string) {
+    const student = await this.studentInScope(ws, studentId);
+    const guardian = await this.prisma.user.findUniqueOrThrow({
+      where: { id: student.guardianUserId },
+      select: { name: true, phone: true, username: true, lastLoginAt: true, passwordHash: true, status: true },
+    });
+    const own = student.studentUserId
+      ? await this.prisma.user.findUnique({
+          where: { id: student.studentUserId },
+          select: { name: true, phone: true, username: true, lastLoginAt: true, passwordHash: true, status: true },
+        })
+      : null;
+    const view = (u: typeof guardian) => ({
+      name: u.name,
+      login: loginOf(u),
+      hasPassword: Boolean(u.passwordHash),
+      lastLoginAt: u.lastLoginAt,
+      status: u.status,
+    });
+    return { guardian: view(guardian), student: own ? view(own) : null };
+  }
+
+  /** بيانات دخول ولي الأمر (فقط إن لم يستخدم حسابه بعد) */
+  async guardianCredentials(ws: WorkspaceCtx, studentId: string) {
+    const student = await this.studentInScope(ws, studentId);
+    const guardian = await this.prisma.user.findUniqueOrThrow({ where: { id: student.guardianUserId } });
+    if (guardian.lastLoginAt) {
+      throw new ForbiddenException('ولي الأمر استخدم حسابه بالفعل. إعادة تعيين كلمة المرور تتم من إدارة المنصة.');
+    }
+    return this.credentials.setPassword(guardian.id, {
+      actorUserId: ws.userId, workspaceId: ws.workspaceId, ip: ws.ip, action: 'user.credentials_issue',
+    });
+  }
+
+  /** حساب دخول مستقل للطالب: يحل الامتحانات ويتابع جدوله من موبايله */
+  async studentAccount(ws: WorkspaceCtx, studentId: string, dto: StudentAccountDto) {
+    const student = await this.studentInScope(ws, studentId);
+    if (student.studentUserId) {
+      const existing = await this.prisma.user.findUniqueOrThrow({ where: { id: student.studentUserId } });
+      if (existing.lastLoginAt) {
+        throw new ForbiddenException('الطالب استخدم حسابه بالفعل. إعادة تعيين كلمة المرور تتم من إدارة المنصة.');
+      }
+      return this.credentials.setPassword(existing.id, {
+        actorUserId: ws.userId, workspaceId: ws.workspaceId, ip: ws.ip, action: 'user.credentials_issue',
+      });
+    }
+    const username = dto.username?.trim()
+      ? await this.credentials.assertUsernameFree(dto.username)
+      : await this.credentials.generateUsername('s');
+    const user = await this.prisma.user.create({ data: { name: student.fullName, username } });
+    await this.prisma.scoped(wsScope(ws), async (tx) => {
+      await tx.student.update({ where: { id: studentId }, data: { studentUserId: user.id } });
+      await this.audit.log(tx, {
+        workspaceId: ws.workspaceId, actorUserId: ws.userId, action: 'student.account_create', entity: 'student', entityId: studentId, ip: ws.ip,
+      });
+    });
+    return this.credentials.setPassword(user.id, {
+      actorUserId: ws.userId, workspaceId: ws.workspaceId, ip: ws.ip, action: 'user.credentials_issue',
+    });
+  }
+
+  private studentInScope(ws: WorkspaceCtx, studentId: string) {
+    return this.prisma.scoped(wsScope(ws), async (tx) => {
+      const enrolled = await tx.enrollment.count({ where: { studentId, group: groupScope(ws) } });
+      if (!enrolled) throw new NotFoundException('الطالب غير موجود');
+      return tx.student.findUniqueOrThrow({ where: { id: studentId } });
+    });
+  }
+
   private assertDiscountAllowed(ws: WorkspaceCtx, pct: number, maxPct: number) {
     if (pct <= 0) return;
     assertCan(ws, 'finance.discount', 'منح الخصم غير مسموح لدورك');
@@ -423,6 +518,26 @@ export class StudentsController {
   @RequirePermission('students.write')
   reissue(@Ws() ws: WorkspaceCtx, @Param('id', ParseUUIDPipe) id: string) {
     return this.svc.reissueCard(ws, id);
+  }
+
+  @Get(':id/accounts')
+  @RequirePermission('students.write')
+  accounts(@Ws() ws: WorkspaceCtx, @Param('id', ParseUUIDPipe) id: string) {
+    return this.svc.accounts(ws, id);
+  }
+
+  @Post(':id/guardian-credentials')
+  @HttpCode(200)
+  @RequirePermission('students.write')
+  guardianCredentials(@Ws() ws: WorkspaceCtx, @Param('id', ParseUUIDPipe) id: string) {
+    return this.svc.guardianCredentials(ws, id);
+  }
+
+  @Post(':id/student-account')
+  @HttpCode(200)
+  @RequirePermission('students.write')
+  studentAccount(@Ws() ws: WorkspaceCtx, @Param('id', ParseUUIDPipe) id: string, @Body() dto: StudentAccountDto) {
+    return this.svc.studentAccount(ws, id, dto);
   }
 
   @Patch('enrollments/:id')
